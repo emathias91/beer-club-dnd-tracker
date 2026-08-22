@@ -1,0 +1,15 @@
+services:
+  dnd-tracker:
+    build: .
+    container_name: dnd-campaign-tracker
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      - DATA_DIR=/app/data
+    volumes:
+      # Bind mounts, matching how the container is actually running today.
+      # ./data keeps campaign_state.json and its backups visible in the
+      # ZimaOS Files app, instead of hidden inside a Docker named volume.
+      - .:/app
+      - ./data:/app/data

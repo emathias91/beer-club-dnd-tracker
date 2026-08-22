@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beer Club D&D Campaign Tracker</title>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="app-container">
+        
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>Beer Club</h1>
+                <p>D&D Campaign Tracker</p>
+                <div class="campaign-selector-container" style="margin-top: 15px; width: 100%; padding: 0 15px;">
+                    <select id="campaign-select" style="width: 100%; background: var(--bg-card); border: 1px solid var(--border-gold-dim); color: var(--text-light); padding: 5px 8px; border-radius: 4px; font-family: var(--font-heading); font-size: 0.8rem; cursor: pointer; text-align: center;">
+                        <!-- Dynamic options -->
+                    </select>
+                    <button class="btn-dnd" id="btn-campaign-settings" style="width: 100%; margin-top: 6px; font-size: 0.7rem; padding: 4px 8px;">
+                        <i class="fa-solid fa-gear"></i> Campaign Settings
+                    </button>
+                </div>
+            </div>
+            
+            <nav class="nav-menu">
+                <li class="nav-item active" data-target="panel-map">
+                    <span class="nav-link"><i class="fa-solid fa-map"></i>Campaign Map</span>
+                </li>
+                <li class="nav-item" data-target="panel-characters">
+                    <span class="nav-link"><i class="fa-solid fa-user-shield"></i>Characters</span>
+                </li>
+                <li class="nav-item" data-target="panel-combat">
+                    <span class="nav-link"><i class="fa-solid fa-dice-d20"></i>Dice & Combat</span>
+                </li>
+                <li class="nav-item" data-target="panel-logs">
+                    <span class="nav-link"><i class="fa-solid fa-book-open"></i>Session Logs</span>
+                </li>
+                <li class="nav-item" data-target="panel-rules">
+                    <span class="nav-link"><i class="fa-solid fa-scroll"></i>Rules Reference</span>
+                </li>
+                <li class="nav-item" data-target="panel-dm">
+                    <span class="nav-link"><i class="fa-solid fa-lock"></i>DM Notes</span>
+                </li>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <button class="btn-dnd" id="btn-export-data" title="Save dashboard state to a local JSON file">
+                    <i class="fa-solid fa-download"></i> Export Campaign
+                </button>
+                <button class="btn-dnd" id="btn-import-trigger" title="Load dashboard state from a local JSON file">
+                    <i class="fa-solid fa-upload"></i> Import Campaign
+                </button>
+                <input type="file" id="file-import" style="display: none;" accept=".json">
+                <button class="btn-dnd" id="btn-reset-data" style="color: var(--accent-red); border-color: rgba(166,38,38,0.4);" title="Reset dashboard to original state">
+                    <i class="fa-solid fa-trash-can"></i> Reset Board
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+
+            <!-- 1. CAMPAIGN MAP PANEL -->
+            <section id="panel-map" class="panel active">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <h2>Sword Coast Map</h2>
+                        <p>Track the party's journey and pin notable locations. Drag the Shield token to move the party.</p>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-dnd btn-dnd-primary" id="btn-add-marker-modal">
+                            <i class="fa-solid fa-map-pin"></i> Add Location Pin
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="map-view-container">
+                    <div class="map-wrapper" id="map-wrapper">
+                        <div class="map-image-container" id="map-image-container">
+                            <img src="phandelver-map-exterior-player.webp" alt="Lost Mine of Phandelver Map" class="map-img" id="map-image">
+                            
+                            <!-- Dynamic markers will be rendered here -->
+                            <div id="map-markers-layer"></div>
+                            
+                            <!-- Draggable Party Token -->
+                            <div class="party-token" id="party-token" draggable="true" title="Drag me to update Party Location!">
+                                <i class="fa-solid fa-shield-halved"></i>
+                            </div>
+                        </div>
+                        
+                        <!-- Map controls -->
+                        <div class="map-controls">
+                            <button class="map-ctrl-btn" id="map-zoom-in" title="Zoom In"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+                            <button class="map-ctrl-btn" id="map-zoom-out" title="Zoom Out"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+                            <button class="map-ctrl-btn" id="map-zoom-reset" title="Reset Zoom"><i class="fa-solid fa-rotate-left"></i></button>
+                        </div>
+                    </div>
+                    
+                    <div class="map-sidebar">
+                        <div class="dnd-card marker-details-card" id="marker-details-card">
+                            <div class="marker-details-placeholder" id="marker-details-placeholder">
+                                <i class="fa-solid fa-compass"></i>
+                                <p>Click on a map marker or the party token to view location notes and details.</p>
+                            </div>
+                            <div class="marker-content" id="marker-content" style="display: none;">
+                                <h3 id="marker-name">Location Name</h3>
+                                <span class="marker-badge" id="marker-type-badge">Type</span>
+                                <div class="form-group" style="margin-bottom: 15px;">
+                                    <label>Description & Notes</label>
+                                    <p id="marker-description" style="font-size: 0.95rem; line-height: 1.5; color: var(--text-light); white-space: pre-wrap;"></p>
+                                </div>
+                                <div class="marker-actions" style="display: flex; gap: 8px;">
+                                    <button class="btn-dnd" id="btn-edit-marker"><i class="fa-solid fa-pen"></i> Edit</button>
+                                    <button class="btn-dnd" id="btn-delete-marker" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3);"><i class="fa-solid fa-trash"></i> Delete</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="dnd-card" style="max-height: 200px; display: flex; flex-direction: column;">
+                            <div class="dnd-card-title">Party Position</div>
+                            <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                                <p id="party-loc-desc" style="font-size: 0.9rem; color: var(--text-muted); font-style: italic;">Phandalin</p>
+                                <button class="btn-dnd" id="btn-update-party-loc" style="width: 100%; margin-top: 10px;">
+                                    <i class="fa-solid fa-pen-to-square"></i> Update Log Note
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. CHARACTERS PANEL -->
+            <section id="panel-characters" class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <h2>Character Sheets</h2>
+                        <p>View stats, track spell slots, adjust HP, and edit sheet details as characters level up.</p>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-dnd btn-dnd-primary" id="btn-edit-char-modal">
+                            <i class="fa-solid fa-user-pen"></i> Edit Character Specs
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tabs to switch between characters -->
+                <div class="char-select-bar" id="char-select-bar">
+                    <!-- Dynamic tabs rendered here -->
+                </div>
+
+                <!-- Character sheet grid layout -->
+                <div class="char-sheet-grid">
+                    
+                    <!-- Left: Ability Scores -->
+                    <div class="char-left-col">
+                        <div class="ability-scores-container" id="char-abilities-container">
+                            <!-- Dynamic ability scores -->
+                        </div>
+                    </div>
+
+                    <!-- Center: Core Combat Specs & Action/Weapons/Spells -->
+                    <div class="char-center-col">
+                        
+                        <!-- Core summary sheet -->
+                        <div class="dnd-card char-summary-card">
+                            <div class="summary-item">
+                                <span class="summary-label">Race / Species</span>
+                                <span class="summary-val" id="char-species">Wood Elf</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">Class</span>
+                                <span class="summary-val" id="char-class">Druid (Circle of Land)</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">Level</span>
+                                <span class="summary-val" id="char-level">3</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">XP</span>
+                                <span class="summary-val" id="char-xp">900</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">Background</span>
+                                <span class="summary-val" id="char-background">Hermit</span>
+                            </div>
+                        </div>
+
+                        <!-- Combat Stats (HP, AC, Initiative, Speed) -->
+                        <div class="combat-stats-row">
+                            <div class="stat-widget hp">
+                                <span class="stat-widget-label">Hit Points</span>
+                                <span class="stat-widget-val">
+                                    <span id="char-hp-current">27</span>
+                                    <span class="hp-separator">/</span>
+                                    <span id="char-hp-max">27</span>
+                                </span>
+                                <div class="hp-input-group">
+                                    <button class="btn-dnd hp-btn" id="btn-damage-hp" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3);"><i class="fa-solid fa-minus"></i> Dmg</button>
+                                    <button class="btn-dnd hp-btn" id="btn-heal-hp" style="color: var(--accent-green); border-color: rgba(42,127,83,0.3);"><i class="fa-solid fa-plus"></i> Heal</button>
+                                </div>
+                            </div>
+                            <div class="stat-widget">
+                                <span class="stat-widget-label">Armor Class</span>
+                                <span class="stat-widget-val" id="char-ac">14</span>
+                            </div>
+                            <div class="stat-widget">
+                                <span class="stat-widget-label">Initiative</span>
+                                <span class="stat-widget-val" id="char-initiative" style="cursor: pointer;" title="Click to roll initiative!">+1</span>
+                            </div>
+                            <div class="stat-widget">
+                                <span class="stat-widget-label">Speed</span>
+                                <span class="stat-widget-val" id="char-speed" style="font-size: 1.25rem;">30 ft</span>
+                            </div>
+                        </div>
+
+                        <!-- Weapons & Attacks -->
+                        <div class="dnd-card">
+                            <div class="dnd-card-title">Attacks & Damage Cantrips</div>
+                            <div class="weapon-row header">
+                                <span>Attack Name</span>
+                                <span>Bonus</span>
+                                <span>Damage & Type</span>
+                                <span>Properties / Notes</span>
+                            </div>
+                            <div id="char-weapons-container">
+                                <!-- Dynamic attacks list -->
+                            </div>
+                        </div>
+
+                        <!-- Spells List -->
+                        <div class="dnd-card">
+                            <div class="dnd-card-title">Prepared Spells & Cantrips</div>
+                            <div class="spell-row header">
+                                <span>Spell Name</span>
+                                <span>Level</span>
+                                <span>Cast Time / Range</span>
+                                <span>Description / Notes</span>
+                            </div>
+                            <div id="char-spells-container">
+                                <!-- Dynamic spells list -->
+                            </div>
+                        </div>
+
+                        <!-- Equipment List -->
+                        <div class="dnd-card">
+                            <div class="dnd-card-title">Equipment Inventory</div>
+                            <p id="char-equipment" style="font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; color: var(--text-muted);"></p>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Saving Throws, Skills, Spell slots, Backstory -->
+                    <div class="char-right-col">
+                        
+                        <!-- Saving Throws -->
+                        <div class="dnd-card">
+                            <div class="dnd-card-title">Saving Throws</div>
+                            <div class="saves-list" id="char-saves-container">
+                                <!-- Dynamic saving throws list -->
+                            </div>
+                        </div>
+
+                        <!-- Skills -->
+                        <div class="dnd-card">
+                            <div class="dnd-card-title">Skills & Modifiers</div>
+                            <div class="skills-list" id="char-skills-container">
+                                <!-- Dynamic skills list -->
+                            </div>
+                        </div>
+
+                        <!-- Coin Purse -->
+                        <div class="dnd-card" id="char-coins-card">
+                            <div class="dnd-card-title">Coin Purse
+                                <span class="coin-total" id="char-coin-total"></span>
+                            </div>
+                            <div class="coin-grid" id="char-coins-container">
+                                <!-- Dynamic coin inputs -->
+                            </div>
+                        </div>
+
+                        <!-- Limited-Use Resources -->
+                        <div class="dnd-card" id="char-resources-card">
+                            <div class="dnd-card-title">
+                                Limited-Use Resources
+                                <span class="rest-btn-group">
+                                    <button class="rest-btn" id="btn-short-rest" title="Short rest: refills short-rest resources and Warlock pact slots">&#9788; Short Rest</button>
+                                    <button class="rest-btn rest-btn-long" id="btn-long-rest" title="Long rest: full HP, all spell slots, all resources">&#9789; Long Rest</button>
+                                </span>
+                            </div>
+                            <div id="char-resources-container">
+                                <!-- Dynamic resource rows -->
+                            </div>
+                            <button class="add-resource-btn" id="btn-add-resource">+ Add Resource</button>
+                        </div>
+
+                        <!-- Spell Slots Tracker -->
+                        <div class="dnd-card" id="char-spell-slots-card" style="display: none;">
+                            <div class="dnd-card-title">Spell Slots</div>
+                            <div class="spell-slots-grid" id="char-spell-slots-container">
+                                <!-- Dynamic spell slot rows -->
+                            </div>
+                        </div>
+
+                        <!-- Backstory -->
+                        <div class="dnd-card">
+                            <div class="dnd-card-title">Backstory & Traits</div>
+                            <p id="char-backstory" style="font-size: 0.85rem; line-height: 1.5; color: var(--text-muted); white-space: pre-wrap;"></p>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- 3. DICE & COMBAT PANEL -->
+            <section id="panel-combat" class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <h2>Dice Roller & Combat Tracker</h2>
+                        <p>Roll dice with audio effects, roll custom checks, and manage combat initiative ordering.</p>
+                    </div>
+                </div>
+
+                <div class="combat-view-grid">
+                    
+                    <!-- Left: Dice Roller -->
+                    <div class="dice-roller-panel">
+                        <div class="dnd-card" style="display: flex; flex-direction: column; gap: 15px; flex-grow: 1;">
+                            <div class="dnd-card-title">Polyhedral Dice</div>
+                            
+                            <div class="dice-selector">
+                                <button class="dice-btn" data-die="4"><i class="fa-solid fa-dice-d6"></i>d4</button>
+                                <button class="dice-btn" data-die="6"><i class="fa-solid fa-dice-d6"></i>d6</button>
+                                <button class="dice-btn" data-die="8"><i class="fa-solid fa-dice-d6"></i>d8</button>
+                                <button class="dice-btn" data-die="10"><i class="fa-solid fa-dice-d6"></i>d10</button>
+                                <button class="dice-btn" data-die="12"><i class="fa-solid fa-dice-d6"></i>d12</button>
+                                <button class="dice-btn" data-die="20" style="grid-column: span 2; border-color: var(--border-gold);"><i class="fa-solid fa-dice-d20"></i>d20</button>
+                                <button class="dice-btn" data-die="100"><i class="fa-solid fa-dice-d6"></i>d100</button>
+                            </div>
+                            
+                            <div class="dice-modifier-row">
+                                <label for="dice-mod-val">Modifier:</label>
+                                <input type="number" id="dice-mod-val" value="0">
+                                <label style="margin-left: auto;">
+                                    <input type="checkbox" id="dice-sound-toggle" checked style="width: auto; vertical-align: middle;">
+                                    <span style="font-size: 0.8rem; margin-left: 5px;">Roll Audio</span>
+                                </label>
+                            </div>
+
+                            <div class="dice-roll-tray" id="dice-roll-tray">
+                                <div class="dice-roll-animation" id="dice-roll-result">-</div>
+                                <div class="dice-roll-detail" id="dice-roll-detail">Select a die to roll</div>
+                            </div>
+                        </div>
+
+                        <div class="dnd-card" style="height: 200px; display: flex; flex-direction: column;">
+                            <div class="dnd-card-title">Roll History</div>
+                            <div class="dice-history" id="dice-history-list">
+                                <!-- Roll history items dynamically added -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Initiative Tracker -->
+                    <div class="initiative-panel dnd-card">
+                        <div class="dnd-card-title">
+                            <span>Combat Turn Tracker</span>
+                            <span class="round-counter">Round <span id="combat-round">1</span></span>
+                        </div>
+                        
+                        <div class="initiative-header-row">
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn-dnd btn-dnd-success" id="btn-next-turn"><i class="fa-solid fa-forward"></i> Next Turn</button>
+                                <button class="btn-dnd" id="btn-reset-combat"><i class="fa-solid fa-arrow-rotate-left"></i> Reset Tracker</button>
+                            </div>
+                            <button class="btn-dnd btn-dnd-primary" id="btn-add-combatant-modal"><i class="fa-solid fa-user-plus"></i> Add Combatant</button>
+                        </div>
+
+                        <div class="init-list" id="combat-init-list">
+                            <!-- Initiative rows dynamically rendered -->
+                        </div>
+                        
+                        <div style="border-top: 1px solid rgba(197, 160, 89, 0.15); padding-top: 15px; font-size: 0.8rem; color: var(--text-muted);">
+                            <p><i class="fa-solid fa-circle-info"></i> Clicking modifiers or weapon rolls on character sheets will automatically add their results to the Roll Log.</p>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- 4. SESSION LOGS PANEL -->
+            <section id="panel-logs" class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <h2>Session Log Tracker</h2>
+                        <p>Write, edit, and keep notes of the party's adventures across the Phandelver campaign.</p>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-dnd btn-dnd-primary" id="btn-new-log-modal">
+                            <i class="fa-solid fa-file-signature"></i> Write New Log
+                        </button>
+                    </div>
+                </div>
+
+                <div class="session-logs-container">
+                    
+                    <div class="session-list-panel" id="session-logs-list">
+                        <!-- Dynamic list of sessions -->
+                    </div>
+
+                    <div class="session-detail-panel dnd-card">
+                        <div class="dnd-card-title" id="session-detail-title-card">
+                            <span id="session-detail-title">Select a Session</span>
+                            <span style="font-size: 0.8rem; color: var(--text-muted);" id="session-detail-date"></span>
+                        </div>
+                        
+                        <div class="session-detail-body">
+                            <p id="session-detail-summary" style="font-size: 0.95rem; font-weight: 600; color: var(--border-gold); margin-bottom: 15px; border-left: 2px solid var(--border-gold); padding-left: 10px;"></p>
+                            <div class="session-detail-content" id="session-detail-content">
+                                Click on a session log from the left sidebar to view DM and player notes.
+                            </div>
+                        </div>
+
+                        <div class="session-actions" id="session-detail-actions" style="margin-top: 15px; display: none; gap: 8px;">
+                            <button class="btn-dnd" id="btn-edit-session"><i class="fa-solid fa-file-pen"></i> Edit Log</button>
+                            <button class="btn-dnd" id="btn-delete-session" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3);"><i class="fa-solid fa-trash-can"></i> Delete Log</button>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- 5. RULES REFERENCE PANEL -->
+            <section id="panel-rules" class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <h2>D&D 5e Rules & Conditions</h2>
+                        <p>Quick rules reference for standard combat actions, status conditions, and common rules.</p>
+                    </div>
+                </div>
+
+                <div class="rules-grid">
+                    
+                    <div class="dnd-card">
+                        <div class="dnd-card-title">Combat Actions</div>
+                        <div class="rule-item">
+                            <h5>Attack</h5>
+                            <p>Make one melee or ranged attack with a weapon or spell.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Cast a Spell</h5>
+                            <p>Cast a cantrip or spell with a casting time of 1 action.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Dash</h5>
+                            <p>Gain extra movement equal to your speed for the current turn.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Disengage</h5>
+                            <p>Your movement doesn't provoke opportunity attacks for the rest of the turn.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Dodge</h5>
+                            <p>Attack rolls against you have disadvantage if you can see the attacker, and you make DEX saving throws with advantage.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Help</h5>
+                            <p>Give an ally advantage on an ability check or their next attack roll against a target.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Hide</h5>
+                            <p>Make a Dexterity (Stealth) check in an attempt to hide from enemies.</p>
+                        </div>
+                    </div>
+
+                    <div class="dnd-card">
+                        <div class="dnd-card-title">Status Conditions</div>
+                        <div class="rule-item">
+                            <h5><span class="condition-badge" title="Can't see. Attack rolls against have advantage. Attacks made have disadvantage.">Blinded</span></h5>
+                            <p>A blinded creature can't see and automatically fails any ability check that requires sight. Attack rolls against the creature have advantage, and the creature's attack rolls have disadvantage.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5><span class="condition-badge" title="Can't move. Attack rolls against have advantage. Attacks made have disadvantage.">Grappled</span></h5>
+                            <p>A grappled creature's speed becomes 0, and it can't benefit from any bonus to its speed.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5><span class="condition-badge" title="Cannot take actions, reactions. Attack rolls against have advantage.">Paralyzed</span></h5>
+                            <p>The creature is incapacitated and can't move or speak. Automatically fails STR and DEX saving throws. Attack rolls against have advantage. Any attack that hits is a critical hit if the attacker is within 5 feet.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5><span class="condition-badge" title="Disadvantage on attack rolls and ability checks.">Poisoned</span></h5>
+                            <p>A poisoned creature has disadvantage on attack rolls and ability checks.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5><span class="condition-badge" title="Speed 0, attack rolls against have advantage, creature has disadvantage on DEX saving throws.">Prone</span></h5>
+                            <p>The creature's only movement option is to crawl, unless it stands up. Has disadvantage on attack rolls. Attack rolls against the creature have advantage if the attacker is within 5 feet, otherwise disadvantage.</p>
+                        </div>
+                    </div>
+
+                    <div class="dnd-card">
+                        <div class="dnd-card-title">Resting Rules</div>
+                        <div class="rule-item">
+                            <h5>Short Rest (1 Hour)</h5>
+                            <p>Character can spend one or more Hit Dice to regain HP. Roll the hit die, add CON modifier, and recover that amount. Artificers, Warlocks, and Druids regain specific features on short rests.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Long Rest (8 Hours)</h5>
+                            <p>Fully restores HP, spell slots, and restores up to half of the character's maximum Hit Dice. Clears all levels of exhaustion. Paladins replenish their Lay on Hands healing pool.</p>
+                        </div>
+                        <div class="rule-item">
+                            <h5>Dwarven Trance (4 Hours)</h5>
+                            <p>Elf character (Elowen) finishes a long rest in 4 hours if spending it in a trancelike state.</p>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- DM NOTES (PIN protected, stored server-side) -->
+            <section id="panel-dm" class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <h2>DM Notes</h2>
+                        <p class="panel-subtitle">Private to the DM. Stored on the Beelink, never sent to players' browsers.</p>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-dnd" id="btn-dm-lock" style="display:none;"><i class="fa-solid fa-lock"></i> Lock</button>
+                        <button class="btn-dnd" id="btn-dm-change-pin" style="display:none;">Change PIN</button>
+                        <button class="btn-dnd btn-dnd-primary" id="btn-dm-save" style="display:none;"><i class="fa-solid fa-floppy-disk"></i> Save Notes</button>
+                    </div>
+                </div>
+
+                <!-- First run: choose a PIN -->
+                <div class="dm-gate" id="dm-setup" style="display:none;">
+                    <div class="dm-gate-inner">
+                        <i class="fa-solid fa-shield-halved dm-gate-icon"></i>
+                        <h3>Set a DM PIN</h3>
+                        <p>Choose a PIN of at least 4 characters. Only someone with this PIN can read or edit these notes.</p>
+                        <input type="password" id="dm-setup-pin" class="dm-pin-input" placeholder="New PIN" autocomplete="new-password">
+                        <input type="password" id="dm-setup-pin2" class="dm-pin-input" placeholder="Confirm PIN" autocomplete="new-password">
+                        <button class="btn-dnd btn-dnd-primary" id="btn-dm-setup">Set PIN</button>
+                        <div class="dm-error" id="dm-setup-error"></div>
+                    </div>
+                </div>
+
+                <!-- Locked -->
+                <div class="dm-gate" id="dm-locked" style="display:none;">
+                    <div class="dm-gate-inner">
+                        <i class="fa-solid fa-lock dm-gate-icon"></i>
+                        <h3>Locked</h3>
+                        <p>Enter the DM PIN to view these notes.</p>
+                        <input type="password" id="dm-pin" class="dm-pin-input" placeholder="DM PIN" autocomplete="current-password">
+                        <button class="btn-dnd btn-dnd-primary" id="btn-dm-unlock">Unlock</button>
+                        <div class="dm-error" id="dm-error"></div>
+                    </div>
+                </div>
+
+                <!-- Unlocked -->
+                <div id="dm-editor" style="display:none;">
+                    <textarea id="dm-notes-text" class="dm-textarea" placeholder="Secrets, NPC names, plot threads, loot to hand out...
+
+e.g.
+- Glasstaff is Iarno Albrek, a Lords' Alliance agent gone bad
+- Gundren is held at Cragmaw Castle
+- The Black Spider = Nezznar, a drow after Wave Echo Cave"></textarea>
+                    <div class="dm-status" id="dm-status"></div>
+                </div>
+            </section>
+
+
+        </main>
+    </div>
+
+    <!-- ==================== MODALS SHELL ==================== -->
+
+    <!-- Edit Character Specs Modal -->
+    <div class="modal-overlay" id="modal-edit-char">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Edit Character Specs</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-char-id">
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label for="edit-char-level">Level</label>
+                        <input type="number" id="edit-char-level" min="1" max="20">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-char-xp">XP Points</label>
+                        <input type="text" id="edit-char-xp">
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label for="edit-char-hp-max">Max HP</label>
+                        <input type="number" id="edit-char-hp-max">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-char-ac">Armor Class</label>
+                        <input type="number" id="edit-char-ac">
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label for="edit-char-species">Race / Species</label>
+                        <input type="text" id="edit-char-species">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-char-background">Background</label>
+                        <input type="text" id="edit-char-background">
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label for="edit-char-class">Class</label>
+                        <input type="text" id="edit-char-class">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-char-subclass">Subclass</label>
+                        <input type="text" id="edit-char-subclass">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Ability Scores</label>
+                    <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;">
+                        <div class="form-group" style="text-align: center;">
+                            <label style="font-size: 0.65rem;">STR</label>
+                            <input type="number" id="edit-char-str" style="padding: 5px; text-align: center;">
+                        </div>
+                        <div class="form-group" style="text-align: center;">
+                            <label style="font-size: 0.65rem;">DEX</label>
+                            <input type="number" id="edit-char-dex" style="padding: 5px; text-align: center;">
+                        </div>
+                        <div class="form-group" style="text-align: center;">
+                            <label style="font-size: 0.65rem;">CON</label>
+                            <input type="number" id="edit-char-con" style="padding: 5px; text-align: center;">
+                        </div>
+                        <div class="form-group" style="text-align: center;">
+                            <label style="font-size: 0.65rem;">INT</label>
+                            <input type="number" id="edit-char-int" style="padding: 5px; text-align: center;">
+                        </div>
+                        <div class="form-group" style="text-align: center;">
+                            <label style="font-size: 0.65rem;">WIS</label>
+                            <input type="number" id="edit-char-wis" style="padding: 5px; text-align: center;">
+                        </div>
+                        <div class="form-group" style="text-align: center;">
+                            <label style="font-size: 0.65rem;">CHA</label>
+                            <input type="number" id="edit-char-cha" style="padding: 5px; text-align: center;">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="edit-char-equipment">Equipment (Inventory)</label>
+                    <textarea id="edit-char-equipment" rows="4"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-success" id="btn-save-char-specs">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Adjust HP Dialog (Heal / Damage) -->
+    <div class="modal-overlay" id="modal-adjust-hp">
+        <div class="modal-card" style="width: 320px;">
+            <div class="modal-header">
+                <h3 id="hp-modal-title">Damage / Heal</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="hp-action-type"> <!-- 'damage' or 'heal' -->
+                <div class="form-group">
+                    <label for="hp-amount">HP Amount</label>
+                    <input type="number" id="hp-amount" min="1" value="5" style="font-size: 1.25rem; font-weight: bold; text-align: center;">
+                </div>
+                <div class="form-group" id="temp-hp-group" style="display: none;">
+                    <label>
+                        <input type="checkbox" id="hp-is-temp" style="width: auto; vertical-align: middle;">
+                        <span style="font-size: 0.85rem; margin-left: 5px; text-transform: none;">Apply as Temporary HP</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-primary" id="btn-apply-hp">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Map Pin Modal -->
+    <div class="modal-overlay" id="modal-map-marker">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="marker-modal-title">Add Location Pin</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="marker-edit-id">
+                <input type="hidden" id="marker-coord-x">
+                <input type="hidden" id="marker-coord-y">
+                
+                <div class="form-group">
+                    <label for="marker-name-input">Location Name</label>
+                    <input type="text" id="marker-name-input" placeholder="e.g., Phandalin, Cragmaw Castle">
+                </div>
+
+                <div class="form-group">
+                    <label for="marker-type-input">Location Type</label>
+                    <select id="marker-type-input">
+                        <option value="town">Town / Settlement</option>
+                        <option value="city">City</option>
+                        <option value="dungeon">Cave / Dungeon / Danger Zone</option>
+                        <option value="landmark">Ruins / Landmark</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="marker-desc-input">Description & Notes</label>
+                    <textarea id="marker-desc-input" rows="4" placeholder="Write any DM or Player notes here..."></textarea>
+                </div>
+                
+                <p id="marker-coord-display" style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-success" id="btn-save-marker">Save Pin</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Combatant Modal -->
+    <div class="modal-overlay" id="modal-add-combatant">
+        <div class="modal-card" style="width: 400px;">
+            <div class="modal-header">
+                <h3>Add Combatant</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="init-name-input">Name</label>
+                    <input type="text" id="init-name-input" placeholder="e.g., Thorin, Goblin Archer">
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label for="init-score-input">Initiative Roll</label>
+                        <input type="number" id="init-score-input" placeholder="e.g., 15">
+                    </div>
+                    <div class="form-group">
+                        <label for="init-hp-input">HP (optional)</label>
+                        <input type="number" id="init-hp-input" placeholder="e.g., 20">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="init-is-monster" style="width: auto; vertical-align: middle;">
+                        <span style="font-size: 0.85rem; margin-left: 5px; text-transform: none;">Mark as NPC/Monster (red display)</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-primary" id="btn-save-combatant">Add to Initiative</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Write / Edit Session Log Modal -->
+    <div class="modal-overlay" id="modal-session-log">
+        <div class="modal-card" style="width: 700px; max-width: 95%;">
+            <div class="modal-header">
+                <h3 id="session-modal-title">Write New Session Log</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="session-edit-id">
+                
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 15px;">
+                    <div class="form-group">
+                        <label for="session-title-input">Session Title</label>
+                        <input type="text" id="session-title-input" placeholder="e.g., Session 3: The Redbrand Retribution">
+                    </div>
+                    <div class="form-group">
+                        <label for="session-date-input">Play Date</label>
+                        <input type="date" id="session-date-input">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="session-summary-input">One-sentence Summary</label>
+                    <input type="text" id="session-summary-input" placeholder="Brief summary to show in the list...">
+                </div>
+
+                <div class="form-group">
+                    <label for="session-content-input">Full Session Notes (DM & Player Notes)</label>
+                    <textarea id="session-content-input" rows="12" placeholder="Write session notes, loot found, enemies killed, and next steps..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-success" id="btn-save-session">Save Log</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Update Party Location Note Modal -->
+    <div class="modal-overlay" id="modal-party-location">
+        <div class="modal-card" style="width: 400px;">
+            <div class="modal-header">
+                <h3>Update Party Position Log</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="party-location-input">Current Position / Activity</label>
+                    <input type="text" id="party-location-input" placeholder="e.g., In Phandalin, preparing to visit Conyberry">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-success" id="btn-save-party-location">Save Position</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Campaign Settings Modal -->
+    <div class="modal-overlay" id="modal-campaign-settings">
+        <div class="modal-card" style="width: 480px; max-width: 95%;">
+            <div class="modal-header">
+                <h3>Campaign Settings</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="campaign-edit-id">
+                
+                <div class="form-group">
+                    <label for="campaign-name-input">Campaign Name</label>
+                    <input type="text" id="campaign-name-input" placeholder="e.g., Curse of Strahd, My Homebrew">
+                </div>
+                
+                <div class="form-group">
+                    <label for="campaign-map-input">Map Image URL / Local Filename</label>
+                    <input type="text" id="campaign-map-input" placeholder="e.g., phandelver-map-exterior-player.webp or Web URL">
+                    <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Or select a local map image file:</span>
+                    <input type="file" id="campaign-map-file" accept="image/*" style="background: transparent; border: none; padding: 0;">
+                </div>
+                
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 15px; border-top: 1px solid rgba(197, 160, 89, 0.15); padding-top: 15px;">
+                    <button class="btn-dnd btn-dnd-success" id="btn-create-campaign-new" style="justify-content: flex-start; text-align: left;">
+                        <i class="fa-solid fa-folder-plus"></i> Create New Campaign (Blank Slate)
+                    </button>
+                    <button class="btn-dnd" id="btn-clone-campaign-new" style="justify-content: flex-start; text-align: left;">
+                        <i class="fa-solid fa-copy"></i> Clone Current Campaign (Keep Characters)
+                    </button>
+                    <button class="btn-dnd" id="btn-delete-campaign-active" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3); justify-content: flex-start; text-align: left;">
+                        <i class="fa-solid fa-folder-minus"></i> Delete Current Campaign
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-success" id="btn-save-campaign-settings">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SCRIPTS ==================== -->
+    <!-- Load Initial Database -->
+    <script src="data.js"></script>
+    <!-- Load App Logic -->
+    <script src="app.js"></script>
+
+</body>
+</html>
