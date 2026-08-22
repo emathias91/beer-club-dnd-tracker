@@ -1,0 +1,11 @@
+{
+  "name": "dnd-campaign-dashboard",
+  "version": "1.0.0",
+  "description": "Interactive D&D Campaign Dashboard and Character Tracker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Antigravity Pair Programming",
+  "license": "ISC"
+}
