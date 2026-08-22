@@ -1,0 +1,29 @@
+# ---- Live campaign data (do not publish) ----
+data/
+campaign_state.json
+campaign_state.json.tmp
+campaign_state.backup-*.json
+
+# ---- Secrets ----
+dm_notes.json
+dm_notes.json.tmp
+
+# ---- Copyrighted material (WotC maps, sheet exports) ----
+*.webp
+*.jpg
+*.jpeg
+*.png
+!screenshots/*.png
+*.pdf
+*.docx
+
+# ---- Node / editor / OS noise ----
+node_modules/
+npm-debug.log*
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
