@@ -14,6 +14,10 @@ LOCAL_NOTES.md
 LOCAL_NOTES.*.md
 *.local.md
 
+# ---- Agent / editor scratch (do not push) ----
+.hermes/
+.hermes-local/
+
 # ---- Copyrighted material (WotC maps, sheet exports) ----
 *.webp
 *.jpg

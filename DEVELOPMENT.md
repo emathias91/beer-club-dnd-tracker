@@ -41,7 +41,7 @@ A **self-hosted campaign dashboard** for a home table:
 
 **Theme (landed v1):** multi-device trust — middle-path split files, entry seats, claim/offer/DM force, DM prep lock + Characters-panel tools.
 
-**Plan (detailed):** `.hermes/plans/2026-08-22_185542-middle-path-character-files-dm-lock.md`
+Design summary lives in **this file** (below) and in History. Detailed local planning notes stay on each contributor’s machine (not in git).
 
 ### Feature tracker
 
@@ -187,6 +187,7 @@ Newest first. Record shared, meaningful changes (behavior, repo process, fixes).
 
 - **DM / Characters UX polish (local/dev):** moved Lock/Unlock from sidebar onto Characters panel; fixed unlock enable (`locks` → `dmEditLocks`); **Edit Character Specs** disabled for DM until sheet locked; full-width nowrap status line; Edit modal ability scores vertical; Equipment inventory scroll host (scroll works; arrow cursor on scrollbar).
 - Documented completion of F0–F3, F5, F7, F2d–F2h in this file; next focus F4 / F6 / F8–F10.
+- Removed agent-only `.hermes/` planning tree from the repository (gitignored); shared status remains in this file only.
 
 ### 2026-08-22
 
@@ -195,7 +196,7 @@ Newest first. Record shared, meaningful changes (behavior, repo process, fixes).
 - Documented self-hosted POC framing and technical backlog in **this file** (`DEVELOPMENT.md`).
 - Confirmed map art is **not** shipped in git; hosts supply `mapImage` (e.g. symlink/copy of `phandelver-map-exterior-player.webp` beside the app). HTTP 404 on that path is expected until the host adds the file.
 - Local dev pattern validated: branch such as `local/dev`, `DATA_DIR=…/data-local node server.js`, UI on port **8080** (compose maps **8082→8080** on typical Docker hosts).
-- **Architecture decision then implemented (middle-path v1 on local/dev):** multi-file characters + entry seat page + claim/holder writes; helper changes → Accept/Deny with diff; DM force apply + Reload prompt; DM prep lock. Files: `lib/store.js`, `seat-entry.js`, rewired `server.js` / `app.js` / `index.html` / `style.css`. Curl-verified claim, offer accept, stale 409, DM force, prep lock 423. Plan: `.hermes/plans/2026-08-22_185542-middle-path-character-files-dm-lock.md`.
+- **Architecture decision then implemented (middle-path v1):** multi-file characters + entry seat page + claim/holder writes; helper changes → Accept/Deny with diff; DM force apply + Reload prompt; DM prep lock. Files: `lib/store.js`, `seat-entry.js`, rewired `server.js` / `app.js` / `index.html` / `style.css`. Curl-verified claim, offer accept, stale 409, DM force, prep lock 423.
 
 ### Earlier (upstream / pre-shared tracker)
 
@@ -231,5 +232,4 @@ When you land a shared change:
 | Client | `app.js`, `index.html`, `style.css` |
 | Seed data | `data.js` |
 | Container | `Dockerfile`, `docker-compose.yml` |
-| Middle-path plan | `.hermes/plans/2026-08-22_185542-middle-path-character-files-dm-lock.md` |
 | This status file | `DEVELOPMENT.md` |
