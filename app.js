@@ -10,8 +10,43 @@ let state = {
     combatants: [],
     activeCombatantIndex: 0,
     combatRound: 1,
-    rollHistory: []
+    rollHistory: [],
+    revisions: {},
+    locks: {},
+    claims: {},
+    offers: {},
+    dmForces: {}
 };
+
+// Local-only UI (never authoritative on server)
+const LOCAL_UI_KEY = 'dnd_local_ui';
+function loadLocalUi() {
+    try {
+        const u = JSON.parse(localStorage.getItem(LOCAL_UI_KEY) || '{}');
+        if (u.activeCharacterId) state.activeCharacterId = u.activeCharacterId;
+        if (typeof u.zoomLevel === 'number') state.zoomLevel = u.zoomLevel;
+    } catch (e) { /* ignore */ }
+}
+function saveLocalUi() {
+    try {
+        localStorage.setItem(LOCAL_UI_KEY, JSON.stringify({
+            activeCharacterId: state.activeCharacterId,
+            zoomLevel: state.zoomLevel
+        }));
+    } catch (e) { /* ignore */ }
+}
+
+function setSyncStatus(text, level) {
+    const el = document.getElementById('sync-status');
+    if (!el) return;
+    el.textContent = text;
+    el.dataset.level = level || 'ok';
+}
+
+function sessionHeaders() {
+    if (window.SeatSession) return SeatSession.headers();
+    return { 'Content-Type': 'application/json' };
+}
 
 // Web Audio API Sound Synthesizer for rolling dice
 let audioCtx = null;
@@ -78,7 +113,19 @@ function getActiveCampaign() {
 // ----------------------------------------------------
 const IS_SERVER_MODE = window.location.protocol.startsWith('http');
 
-document.addEventListener('DOMContentLoaded', async () => {
+let appBooted = false;
+
+window.bootCampaignApp = async function bootCampaignApp() {
+    if (appBooted) {
+        await loadState();
+        renderCampaignSelector();
+        renderAll();
+        applySeatFocus();
+        processSeatNotices();
+        return;
+    }
+    appBooted = true;
+    loadLocalUi();
     await loadState();
     initNavigation();
     initMapPanel();
@@ -90,64 +137,245 @@ document.addEventListener('DOMContentLoaded', async () => {
     initCampaignSettings();
     initRestButtons();
     initDmPanel();
-    
-    // Trigger initial render
+    initSeatChrome();
     renderCampaignSelector();
     renderAll();
-    
-    // Start collaborative sync polling
+    applySeatFocus();
     startPollingSync();
-});
+    processSeatNotices();
+    setSyncStatus('Live', 'ok');
+};
+
+function applySeatFocus() {
+    if (!window.SeatSession) return;
+    const seat = SeatSession.get();
+    if (!seat) return;
+    if (seat.role === 'player' && seat.characterId) {
+        state.activeCharacterId = seat.characterId;
+        saveLocalUi();
+        const badge = document.getElementById('seat-badge');
+        if (badge) {
+            badge.style.display = 'block';
+            badge.textContent = 'Playing: ' + seat.characterId + (seat.label ? ' (' + seat.label + ')' : '');
+        }
+    } else if (seat.role === 'dm') {
+        const badge = document.getElementById('seat-badge');
+        if (badge) {
+            badge.style.display = 'block';
+            badge.textContent = 'DM seat' + (seat.label ? ' — ' + seat.label : '');
+        }
+        updateCharSheetChrome();
+    }
+}
+
+function initSeatChrome() {
+    const leave = document.getElementById('btn-leave-seat');
+    if (leave) {
+        leave.addEventListener('click', () => {
+            if (window.leaveSeatAndReturn) leaveSeatAndReturn();
+        });
+    }
+    const lockBtn = document.getElementById('btn-dm-char-lock');
+    const unlockBtn = document.getElementById('btn-dm-char-unlock');
+    if (lockBtn) {
+        lockBtn.addEventListener('click', () => dmToggleCharLock(true));
+    }
+    if (unlockBtn) {
+        unlockBtn.addEventListener('click', () => dmToggleCharLock(false));
+    }
+    updateCharSheetChrome();
+}
+
+/** DM tools + lock banner live on the Characters panel (self-contained). */
+function updateCharSheetChrome() {
+    const tools = document.getElementById('char-dm-tools');
+    const statusEl = document.getElementById('char-sheet-status');
+    const lockBtn = document.getElementById('btn-dm-char-lock');
+    const unlockBtn = document.getElementById('btn-dm-char-unlock');
+    const editBtn = document.getElementById('btn-edit-char-modal');
+    const isDm = !!(window.SeatSession && SeatSession.isDm());
+    if (tools) tools.style.display = isDm ? 'flex' : 'none';
+
+    const camp = typeof getActiveCampaign === 'function' ? getActiveCampaign() : null;
+    const charId = state.activeCharacterId;
+    const locks =
+        (state.dmEditLocks && state.dmEditLocks[charId]) ||
+        (state.locks && state.locks[charId]) ||
+        null;
+    const locked = !!(locks && locks.at);
+    const name = (camp && camp.characters && camp.characters[charId] && camp.characters[charId].name) || charId || 'Character';
+
+    if (statusEl) {
+        if (locked) {
+            statusEl.style.display = 'block';
+            statusEl.className = 'char-sheet-status is-locked';
+            statusEl.innerHTML = '<i class="fa-solid fa-lock"></i> <strong>' +
+                escapeHtml(name) + '</strong> is locked for DM corrections' +
+                (locks.note ? ' — ' + escapeHtml(locks.note) : '');
+        } else if (isDm && charId) {
+            statusEl.style.display = 'block';
+            statusEl.className = 'char-sheet-status is-open';
+            statusEl.innerHTML = '<i class="fa-solid fa-lock-open"></i> Working on <strong>' +
+                escapeHtml(name) + '</strong> — lock this sheet to block other saves while you edit';
+        } else {
+            statusEl.style.display = 'none';
+            statusEl.textContent = '';
+        }
+    }
+
+    if (lockBtn) {
+        lockBtn.disabled = !isDm || !charId || locked;
+        lockBtn.title = locked
+            ? 'This sheet is already locked'
+            : 'Lock ' + (name || 'this sheet') + ' so only DM can save it';
+    }
+    if (unlockBtn) {
+        unlockBtn.disabled = !isDm || !charId || !locked;
+        unlockBtn.title = locked
+            ? 'Unlock ' + (name || 'this sheet') + ' so the player can save again'
+            : 'Sheet is not locked';
+    }
+
+    // DM: Edit Character Specs only after Lock This Sheet (greyed until locked).
+    // Players keep edit when a character is selected (their normal sheet edits).
+    if (editBtn) {
+        if (isDm) {
+            editBtn.disabled = !charId || !locked;
+            editBtn.title = !charId
+                ? 'Select a character'
+                : locked
+                    ? 'Edit specs while this sheet is DM-locked'
+                    : 'Lock This Sheet first, then edit character specs';
+        } else {
+            editBtn.disabled = !charId;
+            editBtn.title = charId ? 'Edit character specs' : 'Select a character';
+        }
+    }
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+async function dmToggleCharLock(lock) {
+    if (!window.SeatSession || !SeatSession.isDm()) {
+        alert('DM seat required.');
+        return;
+    }
+    const camp = getActiveCampaign();
+    if (!camp || !state.activeCharacterId) return;
+    const path = '/api/characters/' + encodeURIComponent(camp.id) + '/' +
+        encodeURIComponent(state.activeCharacterId) + (lock ? '/dm-lock' : '/dm-unlock');
+    try {
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: sessionHeaders(),
+            body: JSON.stringify({ note: lock ? 'DM corrections' : '' })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || 'Lock failed');
+            return;
+        }
+        // Keep chrome in sync even before full reload
+        if (!state.dmEditLocks) state.dmEditLocks = {};
+        if (!state.locks) state.locks = {};
+        const id = state.activeCharacterId;
+        if (lock) {
+            const entry = data.dmEditLock || { at: new Date().toISOString(), note: 'DM corrections' };
+            state.dmEditLocks[id] = entry;
+            state.locks[id] = entry;
+        } else {
+            delete state.dmEditLocks[id];
+            delete state.locks[id];
+        }
+        updateCharSheetChrome();
+        setSyncStatus(lock ? 'Character DM-locked' : 'Character unlocked', 'ok');
+        await loadState();
+        renderAll();
+        updateCharSheetChrome();
+    } catch (e) {
+        alert('Network error');
+    }
+}
 
 // Load state from server or localStorage fallback
+function applyServerSnapshot(fetchedState) {
+    const keepChar = state.activeCharacterId;
+    const keepZoom = state.zoomLevel;
+    state.campaigns = fetchedState.campaigns || [];
+    state.combatants = fetchedState.combatants || [];
+    state.activeCombatantIndex = fetchedState.activeCombatantIndex || 0;
+    state.combatRound = fetchedState.combatRound || 1;
+    state.rollHistory = fetchedState.rollHistory || [];
+    state.revisions = fetchedState.revisions || {};
+    state.locks = fetchedState.locks || {};
+    // UI chrome uses dmEditLocks; snapshot exposes the same map as "locks"
+    state.dmEditLocks = fetchedState.dmEditLocks || fetchedState.locks || {};
+    state.claims = fetchedState.claims || {};
+    state.offers = fetchedState.offers || {};
+    state.dmForces = fetchedState.dmForces || {};
+    if (fetchedState.activeCampaignId) {
+        state.activeCampaignId = fetchedState.activeCampaignId;
+    }
+    // restore local-only UI
+    state.activeCharacterId = keepChar || state.activeCharacterId;
+    state.zoomLevel = keepZoom;
+    if (window.SeatSession && SeatSession.characterId()) {
+        state.activeCharacterId = SeatSession.characterId();
+    }
+}
+
 async function loadState() {
     if (IS_SERVER_MODE) {
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
-            
-            const response = await fetch('/api/state', { signal: controller.signal });
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            let response = await fetch('/api/snapshot', { signal: controller.signal, cache: 'no-store' });
+            if (response.status === 404) {
+                response = await fetch('/api/state', { signal: controller.signal, cache: 'no-store' });
+            }
             clearTimeout(timeoutId);
-            
+
             if (response.ok) {
                 const fetchedState = await response.json();
                 console.log('Loaded campaign state from server.');
-                
-                // Merge loaded state into local state
-                state.campaigns = fetchedState.campaigns || [];
-                state.combatants = fetchedState.combatants || [];
-                state.activeCombatantIndex = fetchedState.activeCombatantIndex || 0;
-                state.combatRound = fetchedState.combatRound || 1;
-                state.rollHistory = fetchedState.rollHistory || [];
-                
-                if (fetchedState.activeCampaignId && !state.activeCampaignId) {
-                    state.activeCampaignId = fetchedState.activeCampaignId;
-                }
-                
-                // Update local storage backup
+                applyServerSnapshot(fetchedState);
                 try {
-                    localStorage.setItem('dnd_campaign_state', JSON.stringify(state));
+                    localStorage.setItem('dnd_campaign_state', JSON.stringify({
+                        campaigns: state.campaigns,
+                        activeCampaignId: state.activeCampaignId,
+                        combatants: state.combatants,
+                        activeCombatantIndex: state.activeCombatantIndex,
+                        combatRound: state.combatRound,
+                        rollHistory: state.rollHistory
+                    }));
                 } catch (e) {}
-                
                 if (state.campaigns.length === 0) {
                     resetToDefaults();
+                    await saveStateToServer();
                 }
-                if (!state.activeCampaignId) {
+                if (!state.activeCampaignId && state.campaigns[0]) {
                     state.activeCampaignId = state.campaigns[0].id;
                 }
+                setSyncStatus('Live', 'ok');
                 return;
             } else if (response.status === 404) {
-                console.log('No state found on server. Initializing server database with default templates.');
+                console.log('No state found on server. Initializing defaults.');
                 resetToDefaults();
                 await saveStateToServer();
                 return;
             }
         } catch (e) {
             console.warn('Failed to load state from server, falling back to localStorage:', e);
+            setSyncStatus('Offline', 'err');
         }
     }
-    
-    // Fallback: LocalStorage loading
+
     loadStateFromLocalStorage();
 }
 
@@ -204,31 +432,375 @@ function loadStateFromLocalStorage() {
 }
 
 function saveState() {
+    saveLocalUi();
     try {
-        localStorage.setItem('dnd_campaign_state', JSON.stringify(state));
+        localStorage.setItem('dnd_campaign_state', JSON.stringify({
+            campaigns: state.campaigns,
+            activeCampaignId: state.activeCampaignId,
+            combatants: state.combatants,
+            activeCombatantIndex: state.activeCombatantIndex,
+            combatRound: state.combatRound,
+            rollHistory: state.rollHistory
+        }));
     } catch (e) {
         console.error('Error saving state to localStorage:', e);
     }
-    
+
     if (IS_SERVER_MODE) {
-        saveStateToServer();
+        // Debounced smart save: prefer piece endpoints when revisions known
+        queueSmartSave();
     }
 }
 
+let _saveTimer = null;
+let _saveInFlight = false;
+function queueSmartSave() {
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => { smartSaveToServer(); }, 200);
+}
+
 async function saveStateToServer() {
+    // Full snapshot write (init / import / reset / fallback)
     try {
+        setSyncStatus('Saving…', 'warn');
+        const payload = {
+            campaigns: state.campaigns,
+            activeCampaignId: state.activeCampaignId,
+            combatants: state.combatants,
+            activeCombatantIndex: state.activeCombatantIndex,
+            combatRound: state.combatRound,
+            rollHistory: state.rollHistory
+        };
         const response = await fetch('/api/state', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(state)
+            headers: sessionHeaders(),
+            body: JSON.stringify(payload)
         });
         if (!response.ok) {
             console.error('Server failed to save campaign state:', response.statusText);
+            setSyncStatus('Save failed', 'err');
+            return false;
         }
+        // refresh revisions
+        await loadState();
+        setSyncStatus('Saved', 'ok');
+        return true;
     } catch (e) {
         console.error('Network error saving campaign state to server:', e);
+        setSyncStatus('Offline', 'err');
+        return false;
+    }
+}
+
+async function smartSaveToServer() {
+    if (_saveInFlight) return;
+    _saveInFlight = true;
+    try {
+        const camp = getActiveCampaign();
+        if (!camp) return;
+
+        // If we don't have revision map yet, full save
+        if (!state.revisions || !Object.keys(state.revisions).length) {
+            await saveStateToServer();
+            return;
+        }
+
+        setSyncStatus('Saving…', 'warn');
+        const cid = camp.id;
+
+        // Characters: DM writes all; player writes only claimed seat char
+        let charIds = Object.keys(camp.characters || {});
+        if (window.SeatSession && SeatSession.get()) {
+            const seat = SeatSession.get();
+            if (seat.role === 'player' && seat.characterId) {
+                charIds = charIds.filter(id => id === seat.characterId);
+            }
+        }
+
+        for (const charId of charIds) {
+            const revKey = 'character:' + cid + ':' + charId;
+            let baseRevision = state.revisions[revKey];
+            if (typeof baseRevision !== 'number') {
+                await saveStateToServer();
+                return;
+            }
+            const res = await fetch(
+                '/api/characters/' + encodeURIComponent(cid) + '/' + encodeURIComponent(charId),
+                {
+                    method: 'PUT',
+                    headers: sessionHeaders(),
+                    body: JSON.stringify({
+                        baseRevision,
+                        data: camp.characters[charId]
+                    })
+                }
+            );
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 409) {
+                setSyncStatus('Conflict — reloading', 'err');
+                await loadState();
+                renderAll();
+                processSeatNotices();
+                return;
+            }
+            if (res.status === 423) {
+                setSyncStatus('Locked by DM', 'warn');
+                await loadState();
+                renderAll();
+                return;
+            }
+            if (res.status === 202) {
+                setSyncStatus('Sent for approval', 'warn');
+                showOfferPendingToast(data.summary);
+                await loadState();
+                return;
+            }
+            if (!res.ok) {
+                console.error('Character save failed', charId, data);
+                await saveStateToServer();
+                return;
+            }
+            if (typeof data.revision === 'number') {
+                state.revisions[revKey] = data.revision;
+            }
+        }
+
+        // Helper (no seat / other character): if user edited a non-owned sheet via UI,
+        // allow explicit offer on activeCharacterId when not the claimed seat
+        if (window.SeatSession && SeatSession.get()) {
+            const seat = SeatSession.get();
+            if (seat.role === 'player' && state.activeCharacterId &&
+                state.activeCharacterId !== seat.characterId &&
+                camp.characters[state.activeCharacterId]) {
+                const charId = state.activeCharacterId;
+                const revKey = 'character:' + cid + ':' + charId;
+                const baseRevision = state.revisions[revKey];
+                if (typeof baseRevision === 'number') {
+                    const res = await fetch(
+                        '/api/characters/' + encodeURIComponent(cid) + '/' + encodeURIComponent(charId),
+                        {
+                            method: 'PUT',
+                            headers: sessionHeaders(),
+                            body: JSON.stringify({
+                                baseRevision,
+                                data: camp.characters[charId]
+                            })
+                        }
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (res.status === 202) {
+                        setSyncStatus('Sent for approval', 'warn');
+                        showOfferPendingToast(data.summary);
+                    } else if (res.status === 409) {
+                        setSyncStatus('Conflict — reloading', 'err');
+                        await loadState();
+                        renderAll();
+                        return;
+                    } else if (res.ok && typeof data.revision === 'number') {
+                        state.revisions[revKey] = data.revision;
+                    }
+                }
+            }
+        }
+
+        // Map
+        {
+            const revKey = 'map:' + cid;
+            const baseRevision = state.revisions[revKey];
+            if (typeof baseRevision === 'number') {
+                const res = await fetch('/api/map/' + encodeURIComponent(cid), {
+                    method: 'PUT',
+                    headers: sessionHeaders(),
+                    body: JSON.stringify({
+                        baseRevision,
+                        data: {
+                            mapMarkers: camp.mapMarkers || [],
+                            partyPosition: camp.partyPosition
+                        }
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.status === 409) {
+                    setSyncStatus('Map conflict — reloading', 'err');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
+                if (res.ok && typeof data.revision === 'number') {
+                    state.revisions[revKey] = data.revision;
+                } else if (!res.ok) {
+                    await saveStateToServer();
+                    return;
+                }
+            }
+        }
+
+        // Meta (name, mapImage, logs)
+        {
+            const revKey = 'meta:' + cid;
+            const baseRevision = state.revisions[revKey];
+            if (typeof baseRevision === 'number') {
+                const res = await fetch('/api/meta/' + encodeURIComponent(cid), {
+                    method: 'PUT',
+                    headers: sessionHeaders(),
+                    body: JSON.stringify({
+                        baseRevision,
+                        data: {
+                            id: camp.id,
+                            name: camp.name,
+                            mapImage: camp.mapImage,
+                            sessionLogs: camp.sessionLogs || []
+                        }
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.status === 409) {
+                    setSyncStatus('Meta conflict — reloading', 'err');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
+                if (res.ok && typeof data.revision === 'number') {
+                    state.revisions[revKey] = data.revision;
+                } else if (!res.ok) {
+                    await saveStateToServer();
+                    return;
+                }
+            }
+        }
+
+        // Combat
+        {
+            const revKey = 'combat:' + cid;
+            const baseRevision = state.revisions[revKey];
+            if (typeof baseRevision === 'number') {
+                const res = await fetch('/api/combat/' + encodeURIComponent(cid), {
+                    method: 'PUT',
+                    headers: sessionHeaders(),
+                    body: JSON.stringify({
+                        baseRevision,
+                        data: {
+                            combatants: state.combatants,
+                            activeCombatantIndex: state.activeCombatantIndex,
+                            combatRound: state.combatRound,
+                            rollHistory: state.rollHistory
+                        }
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.status === 409) {
+                    setSyncStatus('Combat conflict — reloading', 'err');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
+                if (res.ok && typeof data.revision === 'number') {
+                    state.revisions[revKey] = data.revision;
+                } else if (!res.ok) {
+                    await saveStateToServer();
+                    return;
+                }
+            }
+        }
+
+        setSyncStatus('Saved', 'ok');
+    } catch (e) {
+        console.error(e);
+        setSyncStatus('Offline', 'err');
+    } finally {
+        _saveInFlight = false;
+    }
+}
+
+function showOfferPendingToast(summary) {
+    const lines = (summary || []).join('\n• ');
+    console.log('Offer pending approval', summary);
+    // lightweight non-blocking note
+    const el = document.getElementById('offer-toast');
+    if (el) {
+        el.style.display = 'block';
+        el.textContent = 'Change sent to seat holder for approval' +
+            (lines ? ': ' + (summary || []).join('; ') : '');
+        setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+}
+
+let _noticeBusy = false;
+const _suppressedDmForce = new Set();
+const _suppressedOffers = new Set();
+async function processSeatNotices() {
+    if (_noticeBusy) return;
+    if (!window.SeatSession) return;
+    const seat = SeatSession.get();
+    if (!seat || seat.role !== 'player' || !seat.characterId) {
+        return;
+    }
+    const charId = seat.characterId;
+
+    const force = state.dmForces && state.dmForces[charId];
+    if (force && !force.seenByHolder && !_suppressedDmForce.has(force.at + charId)) {
+        _noticeBusy = true;
+        try {
+            const summary = (force.summary || []).join('\n• ');
+            const msg = 'DM changed ' + charId +
+                (summary ? ':\n• ' + summary : '') +
+                '\n\nReload sheet to see updates.';
+            if (confirm(msg + '\n\nOK = Reload now')) {
+                const camp = getActiveCampaign();
+                if (camp) {
+                    await fetch(
+                        '/api/characters/' + encodeURIComponent(camp.id) + '/' +
+                        encodeURIComponent(charId) + '/ack-dm-force',
+                        { method: 'POST', headers: sessionHeaders(), body: '{}' }
+                    );
+                }
+                await loadState();
+                renderAll();
+            } else {
+                _suppressedDmForce.add(force.at + charId);
+            }
+        } finally {
+            _noticeBusy = false;
+        }
+        return;
+    }
+
+    const offers = (state.offers && state.offers[charId]) || [];
+    if (!offers.length) return;
+    const offer = offers[0];
+    if (_suppressedOffers.has(offer.id)) return;
+    _noticeBusy = true;
+    try {
+        const summary = (offer.summary || []).join('\n• ');
+        const accept = confirm(
+            charId + ' was modified' +
+            (offer.fromLabel ? ' by ' + offer.fromLabel : '') +
+            (summary ? ':\n• ' + summary : '') +
+            '\n\nOK = Accept   Cancel = Deny'
+        );
+        const camp = getActiveCampaign();
+        if (!camp) return;
+        const base = '/api/characters/' + encodeURIComponent(camp.id) + '/' +
+            encodeURIComponent(charId) + '/offers/' + encodeURIComponent(offer.id) +
+            (accept ? '/accept' : '/deny');
+        const res = await fetch(base, {
+            method: 'POST',
+            headers: sessionHeaders(),
+            body: '{}'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            alert(data.error || 'Could not resolve offer');
+            _suppressedOffers.add(offer.id);
+        }
+        await loadState();
+        renderAll();
+        setTimeout(() => { _noticeBusy = false; processSeatNotices(); }, 100);
+        return;
+    } catch (e) {
+        console.error(e);
+    } finally {
+        _noticeBusy = false;
     }
 }
 
@@ -278,39 +850,49 @@ function isSharedStateEqual(a, b) {
 
 function startPollingSync() {
     if (!IS_SERVER_MODE) return;
-    
+
     setInterval(async () => {
         try {
-            const response = await fetch('/api/state');
+            const response = await fetch('/api/snapshot', { cache: 'no-store' });
             if (response.ok) {
                 const fetchedState = await response.json();
-                
-                // Compare only shared properties to avoid syncing local UI states
                 if (!isSharedStateEqual(state, fetchedState)) {
                     if (!isUserEditing()) {
-                        // Update local shared state properties
-                        state.campaigns = fetchedState.campaigns || [];
-                        state.combatants = fetchedState.combatants || [];
-                        state.activeCombatantIndex = fetchedState.activeCombatantIndex || 0;
-                        state.combatRound = fetchedState.combatRound || 1;
-                        state.rollHistory = fetchedState.rollHistory || [];
-                        
-                        // Local backup update
+                        applyServerSnapshot(fetchedState);
                         try {
-                            localStorage.setItem('dnd_campaign_state', JSON.stringify(state));
+                            localStorage.setItem('dnd_campaign_state', JSON.stringify({
+                                campaigns: state.campaigns,
+                                activeCampaignId: state.activeCampaignId,
+                                combatants: state.combatants,
+                                activeCombatantIndex: state.activeCombatantIndex,
+                                combatRound: state.combatRound,
+                                rollHistory: state.rollHistory
+                            }));
                         } catch (e) {}
-                        
-                        // Update UI
                         renderCampaignSelector();
                         renderAll();
+                        processSeatNotices();
+                        setSyncStatus('Live', 'ok');
                         console.log('Campaign state synchronized from server.');
                     } else {
                         console.log('Campaign sync deferred because user is actively typing or editing a modal.');
                     }
+                } else {
+                    // still merge offers/dmForces/revisions
+                    state.revisions = fetchedState.revisions || state.revisions;
+                    state.offers = fetchedState.offers || {};
+                    state.dmForces = fetchedState.dmForces || {};
+                    state.locks = fetchedState.locks || {};
+                    state.claims = fetchedState.claims || {};
+                    processSeatNotices();
+                    setSyncStatus('Live', 'ok');
                 }
+            } else {
+                setSyncStatus('Server error', 'err');
             }
         } catch (e) {
             console.warn('Error during background state sync polling:', e);
+            setSyncStatus('Offline', 'err');
         }
     }, 3000);
 }
@@ -405,7 +987,7 @@ function initMapPanel() {
     
     function applyZoom() {
         container.style.transform = `scale(${state.zoomLevel})`;
-        saveState();
+        saveLocalUi();
     }
     
     // Add Marker Mode Button
@@ -623,8 +1205,12 @@ function initCharacterPanel() {
     });
     
     document.getElementById('btn-edit-char-modal').addEventListener('click', () => {
+        const btn = document.getElementById('btn-edit-char-modal');
+        if (btn && btn.disabled) return;
         openEditCharSpecsModal();
     });
+
+    bindTextareaScrollHosts();
 }
 
 function renderCharacterTabs() {
@@ -647,7 +1233,7 @@ function renderCharacterTabs() {
         tab.className = `char-tab ${state.activeCharacterId === key ? 'active' : ''}`;
         tab.addEventListener('click', () => {
             state.activeCharacterId = key;
-            saveState();
+            saveLocalUi();
             renderCharacterTabs();
             renderSelectedCharacter();
         });
@@ -672,8 +1258,11 @@ function renderSelectedCharacter() {
     const c = active.characters[state.activeCharacterId];
     if (!c) {
         // No character found panel placeholder
+        updateCharSheetChrome();
         return;
     }
+
+    updateCharSheetChrome();
     
     // Core summary data
     document.getElementById('char-species').innerText = c.species || 'Unknown';
@@ -2065,6 +2654,19 @@ function openEditCharSpecsModal() {
     const active = getActiveCampaign();
     const c = active.characters[state.activeCharacterId];
     if (!c) return;
+
+    // DM must lock the open sheet before editing specs
+    if (window.SeatSession && SeatSession.isDm()) {
+        const charId = state.activeCharacterId;
+        const locks =
+            (state.dmEditLocks && state.dmEditLocks[charId]) ||
+            (state.locks && state.locks[charId]) ||
+            null;
+        if (!(locks && locks.at)) {
+            alert('Lock This Sheet first, then edit character specs.');
+            return;
+        }
+    }
     
     document.getElementById('edit-char-id').value = state.activeCharacterId;
     document.getElementById('edit-char-level').value = c.level;
@@ -2075,7 +2677,8 @@ function openEditCharSpecsModal() {
     document.getElementById('edit-char-background').value = c.background || '';
     document.getElementById('edit-char-class').value = c.class || '';
     document.getElementById('edit-char-subclass').value = c.subclass || '';
-    document.getElementById('edit-char-equipment').value = c.equipment || '';
+    const equipTa = document.getElementById('edit-char-equipment');
+    equipTa.value = c.equipment || '';
     
     document.getElementById('edit-char-str').value = c.abilities.STR.score;
     document.getElementById('edit-char-dex').value = c.abilities.DEX.score;
@@ -2085,6 +2688,32 @@ function openEditCharSpecsModal() {
     document.getElementById('edit-char-cha').value = c.abilities.CHA.score;
     
     document.getElementById('modal-edit-char').style.display = 'flex';
+    // Measure only after the modal is visible — hidden nodes report scrollHeight ~ 0
+    requestAnimationFrame(() => {
+        fitTextareaInScrollHost(equipTa);
+        requestAnimationFrame(() => fitTextareaInScrollHost(equipTa));
+    });
+}
+
+/** Grow textarea height so parent .textarea-scroll-host owns the scrollbar (arrow cursor). */
+function fitTextareaInScrollHost(ta) {
+    if (!ta) return;
+    const host = ta.closest('.textarea-scroll-host');
+    // Reset so scrollHeight reflects full content
+    ta.style.height = '0px';
+    const full = ta.scrollHeight;
+    const hostH = host ? host.clientHeight : 0;
+    // At least fill the host; grow beyond so the HOST scrolls when content is long
+    const next = Math.max(hostH || 104, full);
+    ta.style.height = next + 'px';
+}
+
+function bindTextareaScrollHosts() {
+    document.querySelectorAll('.textarea-scroll-host textarea').forEach(ta => {
+        if (ta.dataset.scrollHostBound) return;
+        ta.dataset.scrollHostBound = '1';
+        ta.addEventListener('input', () => fitTextareaInScrollHost(ta));
+    });
 }
 
 function openHPModal(type) {
