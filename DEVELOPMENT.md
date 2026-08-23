@@ -187,7 +187,7 @@ Newest first. Record shared, meaningful changes (behavior, repo process, fixes).
 
 - **DM / Characters UX polish (local/dev):** moved Lock/Unlock from sidebar onto Characters panel; fixed unlock enable (`locks` → `dmEditLocks`); **Edit Character Specs** disabled for DM until sheet locked; full-width nowrap status line; Edit modal ability scores vertical; Equipment inventory scroll host (scroll works; arrow cursor on scrollbar).
 - Documented completion of F0–F3, F5, F7, F2d–F2h in this file; next focus F4 / F6 / F8–F10.
-- Removed agent-only `.hermes/` planning tree from the repository (gitignored); shared status remains in this file only.
+- Removed agent-only local planning scratch from the repository (gitignored going forward); shared status remains in this file only.
 
 ### 2026-08-22
 
