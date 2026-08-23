@@ -1,5 +1,6 @@
 # ---- Live campaign data (do not publish) ----
 data/
+data-local/
 campaign_state.json
 campaign_state.json.tmp
 campaign_state.backup-*.json
@@ -7,6 +8,11 @@ campaign_state.backup-*.json
 # ---- Secrets ----
 dm_notes.json
 dm_notes.json.tmp
+
+# ---- Local-only notes (do not push) ----
+LOCAL_NOTES.md
+LOCAL_NOTES.*.md
+*.local.md
 
 # ---- Copyrighted material (WotC maps, sheet exports) ----
 *.webp

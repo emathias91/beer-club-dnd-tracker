@@ -236,6 +236,13 @@ body {
     border-bottom: 2px solid var(--border-gold);
     padding-bottom: 15px;
     flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+}
+
+.panel-title {
+    flex: 1 1 auto;
+    min-width: 12rem;
 }
 
 .panel-title h2 {
@@ -1281,6 +1288,97 @@ body {
     outline: none;
 }
 
+/* Edit Character: ability scores stack top→bottom (like the sheet), not 6-across */
+.edit-ability-scores {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    max-width: 220px;
+}
+
+.edit-ability-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+}
+
+.edit-ability-row label {
+    flex: 0 0 3.2rem;
+    margin: 0;
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    letter-spacing: 0.06em;
+    color: var(--border-gold);
+    text-align: right;
+    text-transform: uppercase;
+}
+
+.edit-ability-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 6rem;
+    text-align: center;
+    padding: 8px 10px;
+    font-weight: 700;
+    font-size: 1.05rem;
+}
+
+/*
+ * Textareas show a text (I-beam) cursor on their native scrollbar.
+ * Outer host owns scrolling (arrow/default cursor); inner textarea is text-only.
+ */
+.textarea-scroll-host {
+    height: 10.5rem;
+    max-height: 10.5rem;
+    overflow-x: hidden;
+    overflow-y: scroll; /* keep scrollbar track available when content is long */
+    cursor: default;
+    background-color: var(--bg-darker);
+    border: 1px solid var(--border-gold-dim);
+    border-radius: 4px;
+    transition: var(--transition-smooth);
+}
+
+.textarea-scroll-host:focus-within {
+    border-color: var(--border-gold);
+    box-shadow: var(--glow-gold);
+}
+
+.textarea-scroll-host textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 100%;
+    margin: 0;
+    border: none !important;
+    border-radius: 0;
+    box-shadow: none !important;
+    resize: none;
+    overflow: hidden;
+    cursor: text;
+    background: transparent;
+    /* height set by fitTextareaInScrollHost after modal is visible */
+}
+
+.textarea-scroll-host::-webkit-scrollbar {
+    width: 12px;
+}
+
+.textarea-scroll-host::-webkit-scrollbar-thumb {
+    background: rgba(197, 160, 89, 0.45);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    cursor: default;
+}
+
+.textarea-scroll-host::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.25);
+    cursor: default;
+}
+
 .modal-footer {
     padding: 15px 20px;
     border-top: 1px solid rgba(197, 160, 89, 0.2);
@@ -1659,3 +1757,289 @@ body {
 .dm-status-error {
     color: var(--accent-red-hover);
 }
+
+/* ========== Entry / seat select ========== */
+.entry-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    background: var(--bg-darker);
+    color: var(--text-light);
+}
+
+.entry-left {
+    width: min(420px, 42vw);
+    min-width: 280px;
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    border-right: 2px solid var(--border-gold-dim);
+    background: var(--bg-dark);
+    overflow-y: auto;
+}
+
+.entry-right {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    background: #0a0a0c;
+    min-width: 0;
+}
+
+.entry-map-frame {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    overflow: hidden;
+}
+
+.entry-map-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border: 1px solid var(--border-gold-dim);
+    border-radius: 6px;
+    box-shadow: var(--glow-gold);
+}
+
+.entry-kicker {
+    font-family: var(--font-heading);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--border-gold);
+    font-size: 0.75rem;
+}
+
+.entry-brand h1 {
+    font-family: var(--font-fancy);
+    font-size: 1.6rem;
+    color: var(--text-light);
+    margin: 6px 0;
+}
+
+.entry-sub {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.entry-character-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+}
+
+.entry-seat-btn {
+    text-align: left;
+    background: var(--bg-card);
+    border: 1px solid var(--border-gold-dim);
+    color: var(--text-light);
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.entry-seat-btn:hover {
+    border-color: var(--border-gold);
+    box-shadow: var(--glow-gold);
+}
+
+.entry-seat-btn.claimed {
+    opacity: 0.85;
+    border-style: dashed;
+}
+
+.entry-seat-name {
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+}
+
+.entry-seat-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.entry-seat-badge {
+    font-size: 0.7rem;
+    color: var(--border-gold);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.entry-seat-badge.dm {
+    color: var(--accent-red-hover);
+}
+
+.entry-dm-block {
+    border-top: 1px solid rgba(197, 160, 89, 0.25);
+    padding-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.entry-dm-block h2 {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    color: var(--border-gold);
+}
+
+.entry-label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.entry-label input {
+    background: var(--bg-card);
+    border: 1px solid var(--border-gold-dim);
+    color: var(--text-light);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: var(--font-body);
+}
+
+.entry-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.entry-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.entry-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.seat-badge {
+    margin: 10px 15px 0;
+    padding: 6px 10px;
+    background: rgba(197, 160, 89, 0.12);
+    border: 1px solid var(--border-gold-dim);
+    border-radius: 4px;
+    font-size: 0.72rem;
+    color: var(--border-gold);
+    text-align: center;
+}
+
+/* Character panel: DM lock tools live with the sheet (not sidebar) */
+.panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 1 auto;
+}
+
+.char-dm-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.char-dm-tools .btn-dnd {
+    font-size: 0.75rem;
+    padding: 6px 10px;
+}
+
+.char-dm-tools .btn-dnd:disabled,
+#btn-edit-char-modal:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: grayscale(0.35);
+    pointer-events: none;
+}
+
+/* Full-width status under title+actions — single line when space allows */
+.char-sheet-status {
+    flex: 1 0 100%;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    margin-top: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    padding: 8px 12px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.char-sheet-status.is-locked {
+    background: rgba(180, 60, 60, 0.15);
+    border: 1px solid rgba(200, 80, 80, 0.45);
+    color: var(--accent-red-hover, #e07070);
+}
+
+.char-sheet-status.is-open {
+    background: rgba(197, 160, 89, 0.1);
+    border: 1px solid var(--border-gold-dim);
+    color: var(--text-muted);
+}
+
+.char-sheet-status i {
+    margin-right: 4px;
+}
+
+.sync-status {
+    margin: 6px 15px 0;
+    font-size: 0.7rem;
+    text-align: center;
+    color: var(--accent-green);
+}
+
+.sync-status[data-level="warn"] {
+    color: var(--border-gold);
+}
+
+.sync-status[data-level="err"] {
+    color: var(--accent-red-hover);
+}
+
+.offer-toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 2000;
+    max-width: 360px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-gold);
+    color: var(--text-light);
+    padding: 12px 16px;
+    border-radius: 8px;
+    box-shadow: var(--glow-gold);
+    font-size: 0.85rem;
+}
+
+@media (max-width: 800px) {
+    .entry-screen {
+        flex-direction: column-reverse;
+    }
+    .entry-left {
+        width: 100%;
+        max-height: 55vh;
+    }
+    .entry-right {
+        min-height: 40vh;
+    }
+}
+

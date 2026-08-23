@@ -11,19 +11,58 @@
 </head>
 <body>
 
-    <div class="app-container">
+    <!-- ========== ENTRY / SEAT SELECT ========== -->
+    <div id="entry-screen" class="entry-screen" style="display:flex;">
+        <div class="entry-left">
+            <div class="entry-brand">
+                <p class="entry-kicker">Beer Club</p>
+                <h1 id="entry-campaign-name">Campaign</h1>
+                <p class="entry-sub">Choose your seat to join the table</p>
+            </div>
+            <div id="entry-character-list" class="entry-character-list"></div>
+            <div class="entry-dm-block">
+                <h2><i class="fa-solid fa-dungeon"></i> Dungeon Master</h2>
+                <p class="entry-hint">PIN required if one is configured (same as DM Notes).</p>
+                <label class="entry-label">Device label
+                    <input type="text" id="entry-dm-label" placeholder="DM laptop" value="DM">
+                </label>
+                <label class="entry-label">DM PIN
+                    <input type="password" id="entry-dm-pin" placeholder="PIN" autocomplete="current-password">
+                </label>
+                <button type="button" class="btn-dnd btn-dnd-primary" id="entry-dm-submit">
+                    <i class="fa-solid fa-key"></i> Enter as DM
+                </button>
+            </div>
+            <div class="entry-footer-actions">
+                <button type="button" class="btn-dnd" id="entry-refresh"><i class="fa-solid fa-rotate"></i> Refresh seats</button>
+                <span id="entry-status" class="entry-status"></span>
+            </div>
+        </div>
+        <div class="entry-right">
+            <div class="entry-map-frame">
+                <img id="entry-map-image" class="entry-map-image" src="phandelver-map-exterior-player.webp" alt="Campaign map">
+            </div>
+        </div>
+    </div>
+
+    <div class="app-container" style="display:none;">
         
         <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h1>Beer Club</h1>
                 <p>D&D Campaign Tracker</p>
+                <div id="seat-badge" class="seat-badge" style="display:none;"></div>
+                <div id="sync-status" class="sync-status" data-level="ok">…</div>
                 <div class="campaign-selector-container" style="margin-top: 15px; width: 100%; padding: 0 15px;">
                     <select id="campaign-select" style="width: 100%; background: var(--bg-card); border: 1px solid var(--border-gold-dim); color: var(--text-light); padding: 5px 8px; border-radius: 4px; font-family: var(--font-heading); font-size: 0.8rem; cursor: pointer; text-align: center;">
                         <!-- Dynamic options -->
                     </select>
                     <button class="btn-dnd" id="btn-campaign-settings" style="width: 100%; margin-top: 6px; font-size: 0.7rem; padding: 4px 8px;">
                         <i class="fa-solid fa-gear"></i> Campaign Settings
+                    </button>
+                    <button class="btn-dnd" id="btn-leave-seat" style="width: 100%; margin-top: 6px; font-size: 0.7rem; padding: 4px 8px;">
+                        <i class="fa-solid fa-right-from-bracket"></i> Leave Seat
                     </button>
                 </div>
             </div>
@@ -143,10 +182,19 @@
                         <p>View stats, track spell slots, adjust HP, and edit sheet details as characters level up.</p>
                     </div>
                     <div class="panel-actions">
-                        <button class="btn-dnd btn-dnd-primary" id="btn-edit-char-modal">
+                        <div id="char-dm-tools" class="char-dm-tools" style="display:none;" title="DM only — applies to the character open below">
+                            <button type="button" class="btn-dnd" id="btn-dm-char-lock">
+                                <i class="fa-solid fa-lock"></i> Lock This Sheet
+                            </button>
+                            <button type="button" class="btn-dnd" id="btn-dm-char-unlock">
+                                <i class="fa-solid fa-lock-open"></i> Unlock This Sheet
+                            </button>
+                        </div>
+                        <button class="btn-dnd btn-dnd-primary" id="btn-edit-char-modal" disabled title="Lock this sheet first">
                             <i class="fa-solid fa-user-pen"></i> Edit Character Specs
                         </button>
                     </div>
+                    <div id="char-sheet-status" class="char-sheet-status" style="display:none;" role="status"></div>
                 </div>
 
                 <!-- Tabs to switch between characters -->
@@ -633,37 +681,39 @@ e.g.
 
                 <div class="form-group">
                     <label>Ability Scores</label>
-                    <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;">
-                        <div class="form-group" style="text-align: center;">
-                            <label style="font-size: 0.65rem;">STR</label>
-                            <input type="number" id="edit-char-str" style="padding: 5px; text-align: center;">
+                    <div class="edit-ability-scores">
+                        <div class="edit-ability-row">
+                            <label for="edit-char-str">STR</label>
+                            <input type="number" id="edit-char-str" min="1" max="30">
                         </div>
-                        <div class="form-group" style="text-align: center;">
-                            <label style="font-size: 0.65rem;">DEX</label>
-                            <input type="number" id="edit-char-dex" style="padding: 5px; text-align: center;">
+                        <div class="edit-ability-row">
+                            <label for="edit-char-dex">DEX</label>
+                            <input type="number" id="edit-char-dex" min="1" max="30">
                         </div>
-                        <div class="form-group" style="text-align: center;">
-                            <label style="font-size: 0.65rem;">CON</label>
-                            <input type="number" id="edit-char-con" style="padding: 5px; text-align: center;">
+                        <div class="edit-ability-row">
+                            <label for="edit-char-con">CON</label>
+                            <input type="number" id="edit-char-con" min="1" max="30">
                         </div>
-                        <div class="form-group" style="text-align: center;">
-                            <label style="font-size: 0.65rem;">INT</label>
-                            <input type="number" id="edit-char-int" style="padding: 5px; text-align: center;">
+                        <div class="edit-ability-row">
+                            <label for="edit-char-int">INT</label>
+                            <input type="number" id="edit-char-int" min="1" max="30">
                         </div>
-                        <div class="form-group" style="text-align: center;">
-                            <label style="font-size: 0.65rem;">WIS</label>
-                            <input type="number" id="edit-char-wis" style="padding: 5px; text-align: center;">
+                        <div class="edit-ability-row">
+                            <label for="edit-char-wis">WIS</label>
+                            <input type="number" id="edit-char-wis" min="1" max="30">
                         </div>
-                        <div class="form-group" style="text-align: center;">
-                            <label style="font-size: 0.65rem;">CHA</label>
-                            <input type="number" id="edit-char-cha" style="padding: 5px; text-align: center;">
+                        <div class="edit-ability-row">
+                            <label for="edit-char-cha">CHA</label>
+                            <input type="number" id="edit-char-cha" min="1" max="30">
                         </div>
                     </div>
                 </div>
 
                 <div class="form-group">
                     <label for="edit-char-equipment">Equipment (Inventory)</label>
-                    <textarea id="edit-char-equipment" rows="4"></textarea>
+                    <div class="textarea-scroll-host">
+                        <textarea id="edit-char-equipment" rows="6"></textarea>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -878,11 +928,16 @@ e.g.
         </div>
     </div>
 
+    <!-- Offer toast -->
+    <div id="offer-toast" class="offer-toast" style="display:none;"></div>
+
     <!-- ==================== SCRIPTS ==================== -->
     <!-- Load Initial Database -->
     <script src="data.js"></script>
     <!-- Load App Logic -->
     <script src="app.js"></script>
+    <!-- Entry seats (boots app after claim) -->
+    <script src="seat-entry.js"></script>
 
 </body>
 </html>
