@@ -45,6 +45,7 @@ function setSyncStatus(text, level) {
 
 function sessionHeaders() {
     if (window.SeatSession) return SeatSession.headers();
+    if (window.GameAccess) return GameAccess.headers();
     return { 'Content-Type': 'application/json' };
 }
 
@@ -130,6 +131,8 @@ window.bootCampaignApp = async function bootCampaignApp() {
     initNavigation();
     initMapPanel();
     initCharacterPanel();
+    initEquipmentInventory();
+    initSkillsPanel();
     initCombatPanel();
     initSessionLogsPanel();
     initModals();
@@ -166,6 +169,7 @@ function applySeatFocus() {
         }
         updateCharSheetChrome();
     }
+    updateAdminToolsChrome();
 }
 
 function initSeatChrome() {
@@ -173,6 +177,12 @@ function initSeatChrome() {
     if (leave) {
         leave.addEventListener('click', () => {
             if (window.leaveSeatAndReturn) leaveSeatAndReturn();
+        });
+    }
+    const leaveGame = document.getElementById('btn-leave-game');
+    if (leaveGame) {
+        leaveGame.addEventListener('click', () => {
+            if (window.leaveGameAndReturn) leaveGameAndReturn();
         });
     }
     const lockBtn = document.getElementById('btn-dm-char-lock');
@@ -184,6 +194,7 @@ function initSeatChrome() {
         unlockBtn.addEventListener('click', () => dmToggleCharLock(false));
     }
     updateCharSheetChrome();
+    updateAdminToolsChrome();
 }
 
 /** DM tools + lock banner live on the Characters panel (self-contained). */
@@ -307,11 +318,38 @@ async function dmToggleCharLock(lock) {
 function applyServerSnapshot(fetchedState) {
     const keepChar = state.activeCharacterId;
     const keepZoom = state.zoomLevel;
+    // Hold local combat if we just changed it and server may still be stale
+    const holdCombat = Date.now() < (_suppressCombatSyncUntil || 0);
+    const localCombat = holdCombat
+        ? {
+            combatants: state.combatants,
+            activeCombatantIndex: state.activeCombatantIndex,
+            combatRound: state.combatRound,
+            rollHistory: state.rollHistory
+        }
+        : null;
+
     state.campaigns = fetchedState.campaigns || [];
-    state.combatants = fetchedState.combatants || [];
-    state.activeCombatantIndex = fetchedState.activeCombatantIndex || 0;
-    state.combatRound = fetchedState.combatRound || 1;
-    state.rollHistory = fetchedState.rollHistory || [];
+    if (!holdCombat) {
+        state.combatants = fetchedState.combatants || [];
+        state.activeCombatantIndex = typeof fetchedState.activeCombatantIndex === 'number'
+            ? fetchedState.activeCombatantIndex
+            : 0;
+        state.combatRound = typeof fetchedState.combatRound === 'number'
+            ? fetchedState.combatRound
+            : 1;
+        state.rollHistory = fetchedState.rollHistory || [];
+    } else {
+        state.combatants = localCombat.combatants;
+        state.activeCombatantIndex = localCombat.activeCombatantIndex;
+        state.combatRound = localCombat.combatRound;
+        // Still take newer roll history from server if longer; prefer local if we just rolled
+        if (!localCombat.rollHistory || !localCombat.rollHistory.length) {
+            state.rollHistory = fetchedState.rollHistory || [];
+        } else {
+            state.rollHistory = localCombat.rollHistory;
+        }
+    }
     state.revisions = fetchedState.revisions || {};
     state.locks = fetchedState.locks || {};
     // UI chrome uses dmEditLocks; snapshot exposes the same map as "locks"
@@ -335,11 +373,27 @@ async function loadState() {
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 4000);
-            let response = await fetch('/api/snapshot', { signal: controller.signal, cache: 'no-store' });
+            const hdrs = sessionHeaders();
+            let response = await fetch('/api/snapshot', {
+                signal: controller.signal,
+                cache: 'no-store',
+                headers: hdrs
+            });
             if (response.status === 404) {
-                response = await fetch('/api/state', { signal: controller.signal, cache: 'no-store' });
+                response = await fetch('/api/state', {
+                    signal: controller.signal,
+                    cache: 'no-store',
+                    headers: hdrs
+                });
             }
             clearTimeout(timeoutId);
+
+            if (response.status === 401) {
+                setSyncStatus('Table locked', 'err');
+                console.warn('loadState: game table auth required (X-Game-Token)');
+                loadStateFromLocalStorage();
+                return;
+            }
 
             if (response.ok) {
                 const fetchedState = await response.json();
@@ -356,7 +410,7 @@ async function loadState() {
                     }));
                 } catch (e) {}
                 if (state.campaigns.length === 0) {
-                    resetToDefaults();
+                    await resetToDefaults({ persist: false });
                     await saveStateToServer();
                 }
                 if (!state.activeCampaignId && state.campaigns[0]) {
@@ -366,9 +420,11 @@ async function loadState() {
                 return;
             } else if (response.status === 404) {
                 console.log('No state found on server. Initializing defaults.');
-                resetToDefaults();
+                await resetToDefaults({ persist: false });
                 await saveStateToServer();
                 return;
+            } else {
+                setSyncStatus('Server error', 'err');
             }
         } catch (e) {
             console.warn('Failed to load state from server, falling back to localStorage:', e);
@@ -414,12 +470,12 @@ function loadStateFromLocalStorage() {
             state.combatRound = parsed.combatRound || 1;
             state.rollHistory = parsed.rollHistory || [];
         } else {
-            resetToDefaults();
+            resetToDefaults({ persist: false });
         }
         
         // Safety check
         if (!state.campaigns || state.campaigns.length === 0) {
-            resetToDefaults();
+            resetToDefaults({ persist: false });
         }
         if (!state.activeCampaignId) {
             state.activeCampaignId = state.campaigns[0].id;
@@ -427,7 +483,7 @@ function loadStateFromLocalStorage() {
         if (!state.rollHistory) state.rollHistory = [];
     } catch (e) {
         console.error('Error loading state from localStorage, using defaults:', e);
-        resetToDefaults();
+        resetToDefaults({ persist: false });
     }
 }
 
@@ -499,8 +555,20 @@ async function smartSaveToServer() {
         const camp = getActiveCampaign();
         if (!camp) return;
 
-        // If we don't have revision map yet, full save
+        const seat = (window.SeatSession && SeatSession.get()) || null;
+        const isPlayerSeat = !!(seat && seat.role === 'player' && seat.characterId);
+        const isDmSeat = !!(seat && seat.role === 'dm');
+
+        // Full monolith save bypasses offer flow — never use it for seated players.
+        // DM / no-seat may full-save when revisions missing.
         if (!state.revisions || !Object.keys(state.revisions).length) {
+            if (isPlayerSeat) {
+                setSyncStatus('Syncing…', 'warn');
+                await loadState();
+                renderAll();
+                setSyncStatus('Live', 'ok');
+                return;
+            }
             await saveStateToServer();
             return;
         }
@@ -508,19 +576,22 @@ async function smartSaveToServer() {
         setSyncStatus('Saving…', 'warn');
         const cid = camp.id;
 
-        // Characters: DM writes all; player writes only claimed seat char
+        // Characters: DM writes all; player writes claimed seat (+ offer path for other open sheet)
         let charIds = Object.keys(camp.characters || {});
-        if (window.SeatSession && SeatSession.get()) {
-            const seat = SeatSession.get();
-            if (seat.role === 'player' && seat.characterId) {
-                charIds = charIds.filter(id => id === seat.characterId);
-            }
+        if (isPlayerSeat) {
+            charIds = charIds.filter(id => id === seat.characterId);
         }
 
         for (const charId of charIds) {
             const revKey = 'character:' + cid + ':' + charId;
             let baseRevision = state.revisions[revKey];
             if (typeof baseRevision !== 'number') {
+                if (isPlayerSeat) {
+                    await loadState();
+                    renderAll();
+                    setSyncStatus('Live', 'ok');
+                    return;
+                }
                 await saveStateToServer();
                 return;
             }
@@ -553,10 +624,17 @@ async function smartSaveToServer() {
                 setSyncStatus('Sent for approval', 'warn');
                 showOfferPendingToast(data.summary);
                 await loadState();
+                // revert local non-owned? loadState already applied server truth for offers
                 return;
             }
             if (!res.ok) {
                 console.error('Character save failed', charId, data);
+                if (isPlayerSeat) {
+                    setSyncStatus('Save failed', 'err');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
                 await saveStateToServer();
                 return;
             }
@@ -565,44 +643,71 @@ async function smartSaveToServer() {
             }
         }
 
-        // Helper (no seat / other character): if user edited a non-owned sheet via UI,
-        // allow explicit offer on activeCharacterId when not the claimed seat
-        if (window.SeatSession && SeatSession.get()) {
-            const seat = SeatSession.get();
-            if (seat.role === 'player' && state.activeCharacterId &&
-                state.activeCharacterId !== seat.characterId &&
-                camp.characters[state.activeCharacterId]) {
-                const charId = state.activeCharacterId;
-                const revKey = 'character:' + cid + ':' + charId;
-                const baseRevision = state.revisions[revKey];
-                if (typeof baseRevision === 'number') {
-                    const res = await fetch(
-                        '/api/characters/' + encodeURIComponent(cid) + '/' + encodeURIComponent(charId),
-                        {
-                            method: 'PUT',
-                            headers: sessionHeaders(),
-                            body: JSON.stringify({
-                                baseRevision,
-                                data: camp.characters[charId]
-                            })
-                        }
-                    );
-                    const data = await res.json().catch(() => ({}));
-                    if (res.status === 202) {
-                        setSyncStatus('Sent for approval', 'warn');
-                        showOfferPendingToast(data.summary);
-                    } else if (res.status === 409) {
-                        setSyncStatus('Conflict — reloading', 'err');
-                        await loadState();
-                        renderAll();
-                        return;
-                    } else if (res.ok && typeof data.revision === 'number') {
-                        state.revisions[revKey] = data.revision;
+        // Helper: player edited a different character tab → offer only (never full overwrite)
+        if (isPlayerSeat && state.activeCharacterId &&
+            state.activeCharacterId !== seat.characterId &&
+            camp.characters[state.activeCharacterId]) {
+            const charId = state.activeCharacterId;
+            const revKey = 'character:' + cid + ':' + charId;
+            const baseRevision = state.revisions[revKey];
+            if (typeof baseRevision === 'number') {
+                const res = await fetch(
+                    '/api/characters/' + encodeURIComponent(cid) + '/' + encodeURIComponent(charId),
+                    {
+                        method: 'PUT',
+                        headers: sessionHeaders(),
+                        body: JSON.stringify({
+                            baseRevision,
+                            data: camp.characters[charId]
+                        })
                     }
+                );
+                const data = await res.json().catch(() => ({}));
+                if (res.status === 202) {
+                    setSyncStatus('Sent for approval', 'warn');
+                    showOfferPendingToast(data.summary);
+                    // Reload so helper's local sheet reverts to server truth until accepted
+                    await loadState();
+                    renderAll();
+                    return;
                 }
+                if (res.status === 409) {
+                    setSyncStatus('Conflict — reloading', 'err');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
+                if (res.status === 423) {
+                    setSyncStatus('Locked by DM', 'warn');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
+                if (res.ok && data.mode === 'noop') {
+                    setSyncStatus('Live', 'ok');
+                } else if (res.ok && typeof data.revision === 'number') {
+                    // Should not direct-apply for helpers after server fix; still reload if it did
+                    if (data.mode && String(data.mode).startsWith('direct')) {
+                        console.warn('Unexpected direct save on helper edit', data.mode);
+                    }
+                    state.revisions[revKey] = data.revision;
+                    await loadState();
+                    renderAll();
+                } else if (!res.ok) {
+                    setSyncStatus('Save failed', 'err');
+                    await loadState();
+                    renderAll();
+                    return;
+                }
+            } else {
+                setSyncStatus('Syncing…', 'warn');
+                await loadState();
+                renderAll();
+                return;
             }
         }
 
+        // Map / meta / combat: players may still update shared table state (existing policy)
         // Map
         {
             const revKey = 'map:' + cid;
@@ -629,6 +734,10 @@ async function smartSaveToServer() {
                 if (res.ok && typeof data.revision === 'number') {
                     state.revisions[revKey] = data.revision;
                 } else if (!res.ok) {
+                    if (isPlayerSeat) {
+                        setSyncStatus('Save failed', 'err');
+                        return;
+                    }
                     await saveStateToServer();
                     return;
                 }
@@ -663,6 +772,10 @@ async function smartSaveToServer() {
                 if (res.ok && typeof data.revision === 'number') {
                     state.revisions[revKey] = data.revision;
                 } else if (!res.ok) {
+                    if (isPlayerSeat) {
+                        setSyncStatus('Save failed', 'err');
+                        return;
+                    }
                     await saveStateToServer();
                     return;
                 }
@@ -697,6 +810,10 @@ async function smartSaveToServer() {
                 if (res.ok && typeof data.revision === 'number') {
                     state.revisions[revKey] = data.revision;
                 } else if (!res.ok) {
+                    if (isPlayerSeat) {
+                        setSyncStatus('Save failed', 'err');
+                        return;
+                    }
                     await saveStateToServer();
                     return;
                 }
@@ -853,7 +970,10 @@ function startPollingSync() {
 
     setInterval(async () => {
         try {
-            const response = await fetch('/api/snapshot', { cache: 'no-store' });
+            const response = await fetch('/api/snapshot', {
+                cache: 'no-store',
+                headers: sessionHeaders()
+            });
             if (response.ok) {
                 const fetchedState = await response.json();
                 if (!isSharedStateEqual(state, fetchedState)) {
@@ -883,10 +1003,13 @@ function startPollingSync() {
                     state.offers = fetchedState.offers || {};
                     state.dmForces = fetchedState.dmForces || {};
                     state.locks = fetchedState.locks || {};
+                    state.dmEditLocks = fetchedState.dmEditLocks || fetchedState.locks || state.dmEditLocks;
                     state.claims = fetchedState.claims || {};
                     processSeatNotices();
                     setSyncStatus('Live', 'ok');
                 }
+            } else if (response.status === 401) {
+                setSyncStatus('Table locked', 'err');
             } else {
                 setSyncStatus('Server error', 'err');
             }
@@ -897,26 +1020,32 @@ function startPollingSync() {
     }, 3000);
 }
 
-function resetToDefaults() {
-    const defaultCampaign = {
-        id: "phandelver",
-        name: "Lost Mine of Phandelver",
-        mapImage: "phandelver-map-exterior-player.webp",
-        characters: JSON.parse(JSON.stringify(INITIAL_CHARACTER_DATA)),
-        sessionLogs: JSON.parse(JSON.stringify(INITIAL_SESSION_LOGS)),
-        mapMarkers: JSON.parse(JSON.stringify(INITIAL_MAP_MARKERS)),
-        partyPosition: JSON.parse(JSON.stringify(INITIAL_PARTY_POSITION))
-    };
-    
-    state.campaigns = [defaultCampaign];
-    state.activeCampaignId = "phandelver";
-    state.activeCharacterId = 'Elowen';
+function resetToDefaults(opts) {
+    const persist = !opts || opts.persist !== false;
+    // Blank D&D template — no seed party, map, logs, or combat
+    state.campaigns = [];
+    state.activeCampaignId = '';
+    state.activeCharacterId = null;
     state.zoomLevel = 1.0;
-    state.combatants = initDefaultCombatants(defaultCampaign.characters);
+    state.combatants = [];
     state.activeCombatantIndex = 0;
     state.combatRound = 1;
     state.rollHistory = [];
-    saveState();
+    state.revisions = {};
+    state.locks = {};
+    state.dmEditLocks = {};
+    state.offers = [];
+    state.claims = {};
+    saveLocalUi();
+    try {
+        localStorage.setItem('dnd_campaign_state', JSON.stringify(buildSharedExportPayload()));
+    } catch (e) {
+        console.error('Error saving state to localStorage:', e);
+    }
+    if (persist && IS_SERVER_MODE) {
+        return saveStateToServer();
+    }
+    return Promise.resolve(true);
 }
 
 function initDefaultCombatants(chars) {
@@ -1195,6 +1324,71 @@ function showPartyDetails() {
 // ----------------------------------------------------
 // 2. Character Sheet Controller & Level-up Logic
 // ----------------------------------------------------
+
+/**
+ * HP color spectrum from current HP:
+ * - Full HP → green
+ * - Less than 5 HP remaining → red
+ * - Smooth blend between full and the low-HP zone
+ */
+function hpHealthColor(current, max) {
+    const maxHp = Math.max(1, Number(max) || 1);
+    let cur = Number(current);
+    if (!Number.isFinite(cur)) cur = 0;
+    cur = Math.max(0, Math.min(cur, maxHp));
+
+    if (cur <= 0) {
+        return { color: 'hsl(0, 78%, 38%)', level: 'dead' };
+    }
+    if (cur >= maxHp) {
+        return { color: 'hsl(132, 58%, 42%)', level: 'full' };
+    }
+
+    // Remaining HP < 5 is the red zone (critical)
+    const criticalCap = Math.min(5, maxHp);
+    let t; // 0 = worst red, 1 = just below full green
+    if (cur < criticalCap) {
+        // 0 .. criticalCap → deep red .. orange-red (0 .. ~0.22)
+        t = (cur / criticalCap) * 0.22;
+    } else {
+        // criticalCap .. max → orange-red .. green (0.22 .. 1)
+        t = 0.22 + 0.78 * ((cur - criticalCap) / (maxHp - criticalCap));
+    }
+    t = Math.max(0, Math.min(1, t));
+    const hue = Math.round(120 * t); // 0 red → 120 green
+    const sat = Math.round(72 - 12 * t);
+    const light = Math.round(40 + 6 * t);
+    let level = 'mid';
+    if (cur < criticalCap) level = 'critical';
+    else if (t > 0.75) level = 'high';
+    else if (t < 0.4) level = 'low';
+    return { color: `hsl(${hue}, ${sat}%, ${light}%)`, level };
+}
+
+function updateCharacterHpColor(current, max) {
+    const curEl = document.getElementById('char-hp-current');
+    const maxEl = document.getElementById('char-hp-max');
+    const sepEl = document.querySelector('.stat-widget.hp .hp-separator');
+    const widget = document.querySelector('.stat-widget.hp');
+    if (!curEl) return;
+
+    const { color, level } = hpHealthColor(current, max);
+    curEl.style.color = color;
+    if (maxEl) {
+        // Keep current and max on the same spectrum color (including full = green)
+        maxEl.style.color = color;
+        maxEl.style.opacity = level === 'full' ? '1' : '0.85';
+    }
+    if (sepEl) {
+        sepEl.style.color = color;
+        sepEl.style.opacity = level === 'full' ? '0.85' : '0.65';
+    }
+    if (widget) {
+        widget.dataset.hpLevel = level;
+        widget.style.setProperty('--hp-color', color);
+    }
+}
+
 function initCharacterPanel() {
     document.getElementById('btn-damage-hp').addEventListener('click', () => {
         openHPModal('damage');
@@ -1209,6 +1403,41 @@ function initCharacterPanel() {
         if (btn && btn.disabled) return;
         openEditCharSpecsModal();
     });
+
+    const slotsLongRest = document.getElementById('btn-spell-slots-long-rest');
+    if (slotsLongRest && !slotsLongRest.dataset.bound) {
+        slotsLongRest.dataset.bound = '1';
+        slotsLongRest.addEventListener('click', () => {
+            const c = getActiveCharacter();
+            if (!c) {
+                alert('Select a character first.');
+                return;
+            }
+            if (!c.spellcasting || !c.spellcasting.slots) {
+                alert('This character has no spell slots.');
+                return;
+            }
+            if (!confirm('Long Rest — restore all spell slots for ' + (c.name || 'this character') + '?\n\n(Spell slots only; HP and other resources are unchanged.)')) {
+                return;
+            }
+            let restored = 0;
+            Object.values(c.spellcasting.slots).forEach(slot => {
+                if (slot && slot.expended) {
+                    restored += slot.expended;
+                    slot.expended = 0;
+                }
+            });
+            saveState();
+            renderSelectedCharacter();
+            if (restored > 0) {
+                logRoll(c.name || 'Character', 'Spell Slots Long Rest', restored,
+                    `Restored ${restored} expended spell slot${restored === 1 ? '' : 's'}.`);
+                setSyncStatus('Spell slots restored', 'ok');
+            } else {
+                setSyncStatus('Slots already full', 'ok');
+            }
+        });
+    }
 
     bindTextareaScrollHosts();
 }
@@ -1251,6 +1480,734 @@ function renderCharacterTabs() {
     });
 }
 
+function parseEquipmentLine(line) {
+    let s = String(line || '').replace(/^[\s\-\*\u2022]+/, '').trim();
+    if (!s) return null;
+
+    let qty = 1;
+    let name = s;
+
+    // Patterns: "3x Torch", "3 x Torch", "3× Torch", "Torch x3", "Torch (x3)", "Torch × 3"
+    let m = s.match(/^(\d+)\s*[x×]\s*(.+)$/i);
+    if (m) {
+        qty = parseInt(m[1], 10) || 1;
+        name = m[2].trim();
+    } else {
+        m = s.match(/^(.+?)\s*[x×]\s*(\d+)$/i);
+        if (m) {
+            name = m[1].trim();
+            qty = parseInt(m[2], 10) || 1;
+        } else {
+            m = s.match(/^(.+?)\s*\(\s*[x×]?\s*(\d+)\s*\)$/i);
+            if (m) {
+                name = m[1].trim();
+                qty = parseInt(m[2], 10) || 1;
+            } else {
+                m = s.match(/^(\d+)\s+(.+)$/);
+                // Only treat leading number as qty if rest doesn't look like a pure measure start awkwardly
+                // e.g. "50 ft Rope" keeps as name with qty 1; "3 Torch" -> 3 Torch
+                if (m && !/^(ft|feet|gp|sp|cp|pp|lb|lbs)\b/i.test(m[2])) {
+                    const rest = m[2].trim();
+                    // Prefer "3 Torches" style (qty + short name) over "50 ft Rope"
+                    if (rest.split(/\s+/).length <= 4 && !/^\d/.test(rest)) {
+                        qty = parseInt(m[1], 10) || 1;
+                        name = rest;
+                    }
+                }
+            }
+        }
+    }
+
+    name = name.replace(/\s+/g, ' ').trim();
+    if (!name) return null;
+    if (!Number.isFinite(qty) || qty < 1) qty = 1;
+    return { qty, name, key: name.toLowerCase() };
+}
+
+function formatEquipmentLine(item) {
+    const q = item.qty > 1 ? (item.qty + 'x ') : '';
+    return q + item.name;
+}
+
+function parseEquipmentList(equipmentText) {
+    const raw = String(equipmentText == null ? '' : equipmentText).trim();
+    if (!raw) return [];
+    const map = new Map(); // key -> { qty, name, key }
+    raw.split(/\r?\n|;|•/g).forEach(line => {
+        const parsed = parseEquipmentLine(line);
+        if (!parsed) return;
+        const existing = map.get(parsed.key);
+        if (existing) {
+            existing.qty += parsed.qty;
+        } else {
+            map.set(parsed.key, { qty: parsed.qty, name: parsed.name, key: parsed.key });
+        }
+    });
+    return Array.from(map.values());
+}
+
+function serializeEquipmentList(items) {
+    return (items || [])
+        .filter(it => it && it.name && it.qty > 0)
+        .map(formatEquipmentLine)
+        .join('\n');
+}
+
+function getActiveCharacter() {
+    const active = getActiveCampaign();
+    if (!active || !state.activeCharacterId) return null;
+    return active.characters[state.activeCharacterId] || null;
+}
+
+function commitActiveEquipment(items) {
+    const c = getActiveCharacter();
+    if (!c) return;
+    c.equipment = serializeEquipmentList(items);
+    renderEquipmentGrid(c.equipment);
+    saveState();
+}
+
+function renderBackstoryAndTraits(c) {
+    const el = document.getElementById('char-backstory');
+    if (!el) return;
+    el.className = 'char-backstory-text';
+    el.innerHTML = '';
+
+    const features = (c && c.features && typeof c.features === 'object') ? c.features : {};
+    const sections = [];
+
+    const pushSection = (title, text) => {
+        const t = String(text == null ? '' : text).trim();
+        if (!t) return;
+        sections.push({ title, text: t });
+    };
+
+    pushSection('Backstory', c && c.backstory);
+    pushSection('Class Features', features.classFeatures);
+    pushSection('Species Traits', features.speciesTraits);
+    pushSection('Feats', features.feats);
+
+    // Any other feature keys
+    Object.keys(features).forEach(k => {
+        if (k === 'classFeatures' || k === 'speciesTraits' || k === 'feats') return;
+        const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+        pushSection(label, features[k]);
+    });
+
+    if (!sections.length) {
+        const p = document.createElement('p');
+        p.className = 'backstory-empty';
+        p.textContent = 'No backstory or traits written for this character.';
+        el.appendChild(p);
+        return;
+    }
+
+    sections.forEach(sec => {
+        const wrap = document.createElement('section');
+        wrap.className = 'backstory-section';
+        const h = document.createElement('h4');
+        h.textContent = sec.title;
+        const body = document.createElement('div');
+        body.className = 'backstory-body';
+        body.textContent = sec.text;
+        wrap.appendChild(h);
+        wrap.appendChild(body);
+        el.appendChild(wrap);
+    });
+}
+
+function renderEquipmentGrid(equipmentText) {
+    const el = document.getElementById('char-equipment');
+    if (!el) return;
+    el.innerHTML = '';
+    el.className = 'equipment-grid';
+
+    const items = parseEquipmentList(equipmentText);
+    if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'equipment-empty';
+        empty.textContent = 'No items listed. Use Add to put something in the pack.';
+        el.appendChild(empty);
+        return;
+    }
+
+    items.forEach((item, index) => {
+        const cell = document.createElement('div');
+        cell.className = 'equipment-item';
+        cell.innerHTML =
+            '<div class="equipment-item-main" title="' + escapeHtml(item.qty + '× ' + item.name) + '">' +
+                '<span class="equipment-qty">' + escapeHtml(String(item.qty)) + '×</span>' +
+                '<span class="equipment-name">' + escapeHtml(item.name) + '</span>' +
+            '</div>' +
+            '<div class="equipment-item-actions">' +
+                '<button type="button" class="equip-btn equip-btn-transfer" title="Transfer to another party member" data-idx="' + index + '">' +
+                    '<i class="fa-solid fa-right-left"></i>' +
+                '</button>' +
+                '<button type="button" class="equip-btn equip-btn-remove" title="Remove some or all" data-idx="' + index + '">' +
+                    '<i class="fa-solid fa-minus"></i>' +
+                '</button>' +
+            '</div>';
+
+        cell.querySelector('.equip-btn-remove').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeEquipmentItem(item.key);
+        });
+        cell.querySelector('.equip-btn-transfer').addEventListener('click', (e) => {
+            e.stopPropagation();
+            transferEquipmentItem(item.key);
+        });
+
+        el.appendChild(cell);
+    });
+}
+
+function addEquipmentFromForm() {
+    const c = getActiveCharacter();
+    if (!c) {
+        alert('Select a character first.');
+        return;
+    }
+    const qtyEl = document.getElementById('equip-qty-input');
+    const nameEl = document.getElementById('equip-name-input');
+    let qty = qtyEl ? parseInt(qtyEl.value, 10) : 1;
+    const name = nameEl ? nameEl.value.trim() : '';
+    if (!name) {
+        alert('Enter an item name.');
+        if (nameEl) nameEl.focus();
+        return;
+    }
+    if (!Number.isFinite(qty) || qty < 1) qty = 1;
+
+    const items = parseEquipmentList(c.equipment);
+    const key = name.toLowerCase();
+    const existing = items.find(it => it.key === key);
+    if (existing) {
+        // Match (case-insensitive): increase quantity (by entered amount; default 1)
+        existing.qty += qty;
+        // Keep nicer casing if user typed a better label? keep original existing.name
+    } else {
+        items.push({ qty, name, key });
+    }
+    // stable-ish sort by name
+    items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    commitActiveEquipment(items);
+
+    const modal = document.getElementById('modal-add-equipment');
+    if (modal) modal.style.display = 'none';
+    if (qtyEl) qtyEl.value = '1';
+    if (nameEl) nameEl.value = '';
+}
+
+function removeEquipmentItem(itemKey) {
+    const c = getActiveCharacter();
+    if (!c) return;
+    const items = parseEquipmentList(c.equipment);
+    const item = items.find(it => it.key === itemKey);
+    if (!item) return;
+
+    const ans = prompt(
+        'Remove how many "' + item.name + '"?\n\n' +
+        'Currently: ' + item.qty + '\n' +
+        'Enter a number, or ALL to remove them all.',
+        '1'
+    );
+    if (ans == null) return;
+    const trimmed = String(ans).trim();
+    let removeQty;
+    if (/^all$/i.test(trimmed)) {
+        removeQty = item.qty;
+    } else {
+        removeQty = parseInt(trimmed, 10);
+        if (!Number.isFinite(removeQty) || removeQty < 1) {
+            alert('Enter a positive number or ALL.');
+            return;
+        }
+    }
+
+    item.qty -= removeQty;
+    const next = items.filter(it => it.qty > 0);
+    commitActiveEquipment(next);
+}
+
+function transferEquipmentItem(itemKey) {
+    const active = getActiveCampaign();
+    const from = getActiveCharacter();
+    if (!active || !from) return;
+
+    const items = parseEquipmentList(from.equipment);
+    const item = items.find(it => it.key === itemKey);
+    if (!item) return;
+
+    const party = Object.keys(active.characters || {})
+        .filter(id => id !== state.activeCharacterId)
+        .map(id => {
+            const ch = active.characters[id];
+            return {
+                id,
+                label: (ch && ch.name ? ch.name : id) + (ch && ch.player ? ' (' + ch.player + ')' : '')
+            };
+        });
+
+    if (!party.length) {
+        alert('No other party members to transfer to.');
+        return;
+    }
+
+    const roster = party.map((p, i) => (i + 1) + ') ' + p.label).join('\n');
+    const who = prompt(
+        'Transfer "' + item.name + '" to which party member?\n\n' + roster +
+        '\n\nType the number or the character name:',
+        '1'
+    );
+    if (who == null) return;
+
+    const whoTrim = String(who).trim();
+    let targetId = null;
+    if (/^\d+$/.test(whoTrim)) {
+        const n = parseInt(whoTrim, 10);
+        if (n >= 1 && n <= party.length) targetId = party[n - 1].id;
+    }
+    if (!targetId) {
+        const low = whoTrim.toLowerCase();
+        const hit = party.find(p =>
+            p.id.toLowerCase() === low ||
+            p.label.toLowerCase() === low ||
+            p.label.toLowerCase().startsWith(low) ||
+            (active.characters[p.id] && active.characters[p.id].name &&
+                active.characters[p.id].name.toLowerCase() === low)
+        );
+        if (hit) targetId = hit.id;
+    }
+    if (!targetId || !active.characters[targetId]) {
+        alert('Could not match that party member.');
+        return;
+    }
+
+    const qtyAns = prompt(
+        'How many "' + item.name + '" to give to ' +
+        (active.characters[targetId].name || targetId) + '?\n\nCurrently: ' + item.qty +
+        '\nEnter a number, or ALL.',
+        '1'
+    );
+    if (qtyAns == null) return;
+    const qt = String(qtyAns).trim();
+    let moveQty;
+    if (/^all$/i.test(qt)) moveQty = item.qty;
+    else {
+        moveQty = parseInt(qt, 10);
+        if (!Number.isFinite(moveQty) || moveQty < 1) {
+            alert('Enter a positive number or ALL.');
+            return;
+        }
+    }
+    if (moveQty > item.qty) moveQty = item.qty;
+
+    // Remove from source
+    item.qty -= moveQty;
+    const fromNext = items.filter(it => it.qty > 0);
+
+    // Add to target (case-insensitive stack)
+    const toChar = active.characters[targetId];
+    const toItems = parseEquipmentList(toChar.equipment);
+    const existing = toItems.find(it => it.key === item.key);
+    if (existing) existing.qty += moveQty;
+    else toItems.push({ qty: moveQty, name: item.name, key: item.key });
+    toItems.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    toChar.equipment = serializeEquipmentList(toItems);
+
+    from.equipment = serializeEquipmentList(fromNext);
+    renderEquipmentGrid(from.equipment);
+    // Both characters changed — full document save so receiver gets the items too
+    saveStateToServer().then(ok => {
+        if (!ok) {
+            setSyncStatus('Transfer save failed', 'err');
+            alert('Transfer applied locally but server save failed. Check sync status.');
+        } else {
+            setSyncStatus('Transferred', 'ok');
+        }
+    });
+}
+
+function initEquipmentInventory() {
+    const addBtn = document.getElementById('btn-equip-add');
+    if (addBtn) {
+        addBtn.addEventListener('click', () => {
+            if (!getActiveCharacter()) {
+                alert('Select a character first.');
+                return;
+            }
+            const qty = document.getElementById('equip-qty-input');
+            const name = document.getElementById('equip-name-input');
+            if (qty) qty.value = '1';
+            if (name) name.value = '';
+            const modal = document.getElementById('modal-add-equipment');
+            if (modal) modal.style.display = 'flex';
+            if (name) setTimeout(() => name.focus(), 50);
+        });
+    }
+    const saveBtn = document.getElementById('btn-save-equipment');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', () => addEquipmentFromForm());
+    }
+    const nameInput = document.getElementById('equip-name-input');
+    if (nameInput) {
+        nameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addEquipmentFromForm();
+            }
+        });
+    }
+}
+
+// Standard D&D skills (key, label, ability)
+const STANDARD_SKILL_LIST = [
+    { key: 'acrobatics', label: 'Acrobatics', ab: 'DEX' },
+    { key: 'animalHandling', label: 'Animal Handling', ab: 'WIS' },
+    { key: 'arcana', label: 'Arcana', ab: 'INT' },
+    { key: 'athletics', label: 'Athletics', ab: 'STR' },
+    { key: 'deception', label: 'Deception', ab: 'CHA' },
+    { key: 'history', label: 'History', ab: 'INT' },
+    { key: 'insight', label: 'Insight', ab: 'WIS' },
+    { key: 'intimidation', label: 'Intimidation', ab: 'CHA' },
+    { key: 'investigation', label: 'Investigation', ab: 'INT' },
+    { key: 'medicine', label: 'Medicine', ab: 'WIS' },
+    { key: 'nature', label: 'Nature', ab: 'INT' },
+    { key: 'perception', label: 'Perception', ab: 'WIS' },
+    { key: 'performance', label: 'Performance', ab: 'CHA' },
+    { key: 'persuasion', label: 'Persuasion', ab: 'CHA' },
+    { key: 'religion', label: 'Religion', ab: 'INT' },
+    { key: 'sleightOfHand', label: 'Sleight of Hand', ab: 'DEX' },
+    { key: 'stealth', label: 'Stealth', ab: 'DEX' },
+    { key: 'survival', label: 'Survival', ab: 'WIS' }
+];
+
+const ABILITY_FULL_NAMES = {
+    STR: 'Strength',
+    DEX: 'Dexterity',
+    CON: 'Constitution',
+    INT: 'Intelligence',
+    WIS: 'Wisdom',
+    CHA: 'Charisma'
+};
+
+// UI-only: which ability skill groups are open (not synced)
+const skillGroupOpen = {
+    STR: false,
+    DEX: false,
+    CON: false,
+    INT: false,
+    WIS: false,
+    CHA: false
+};
+
+function skillKeyFromName(name) {
+    const base = String(name || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+(.)/g, (_, c) => c.toUpperCase())
+        .replace(/[^a-zA-Z0-9]/g, '');
+    return base || ('custom' + Date.now());
+}
+
+function normalizeSkillModifier(raw) {
+    let s = String(raw == null ? '' : raw).trim();
+    if (!s) return '+0';
+    if (/^[+-]?\d+$/.test(s)) {
+        const n = parseInt(s, 10);
+        return (n >= 0 ? '+' : '') + n;
+    }
+    // allow "+ 2" etc.
+    const m = s.match(/^([+-])\s*(\d+)$/);
+    if (m) return m[1] + parseInt(m[2], 10);
+    return s;
+}
+
+function getCharacterSkillEntries(c) {
+    if (!c.skills) c.skills = {};
+    if (!Array.isArray(c.customSkills)) c.customSkills = [];
+
+    const entries = STANDARD_SKILL_LIST.map(s => ({
+        key: s.key,
+        label: s.label,
+        ab: s.ab,
+        custom: false,
+        val: c.skills[s.key] != null && c.skills[s.key] !== ''
+            ? c.skills[s.key]
+            : (c.abilities && c.abilities[s.ab] ? c.abilities[s.ab].mod : '+0')
+    }));
+
+    c.customSkills.forEach(cs => {
+        if (!cs || !cs.name) return;
+        const key = cs.key || skillKeyFromName(cs.name);
+        const ab = (cs.ability || cs.ab || 'INT').toUpperCase();
+        const val = cs.modifier != null && cs.modifier !== ''
+            ? normalizeSkillModifier(cs.modifier)
+            : (c.skills[key] != null ? c.skills[key] : '+0');
+        // keep skills map in sync for rolls / recalculation consumers
+        if (c.skills[key] == null) c.skills[key] = val;
+        entries.push({
+            key,
+            label: cs.name,
+            ab: ABILITY_FULL_NAMES[ab] ? ab : 'INT',
+            custom: true,
+            val: c.skills[key] || val
+        });
+    });
+
+    return entries;
+}
+
+function renderCharacterSkills(c, searchQuery) {
+    const skillsCont = document.getElementById('char-skills-container');
+    if (!skillsCont) return;
+    skillsCont.innerHTML = '';
+
+    const q = String(searchQuery == null
+        ? ((document.getElementById('skills-search-input') || {}).value || '')
+        : searchQuery).trim().toLowerCase();
+
+    const entries = getCharacterSkillEntries(c);
+    const abilityOrder = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
+
+    let anyVisible = false;
+
+    abilityOrder.forEach(ab => {
+        let groupSkills = entries.filter(s => s.ab === ab);
+        if (q) {
+            groupSkills = groupSkills.filter(s =>
+                s.label.toLowerCase().includes(q) ||
+                s.ab.toLowerCase().includes(q) ||
+                String(s.val).toLowerCase().includes(q) ||
+                (ABILITY_FULL_NAMES[ab] || '').toLowerCase().includes(q)
+            );
+        }
+        if (!groupSkills.length) return;
+        anyVisible = true;
+
+        // Auto-open groups that match search
+        const forceOpen = !!q;
+        const isOpen = forceOpen || !!skillGroupOpen[ab];
+
+        const group = document.createElement('div');
+        group.className = 'skill-ability-group' + (isOpen ? ' is-open' : '');
+        group.dataset.ability = ab;
+
+        const header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'skill-group-header';
+        header.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        const abModHeader = (c.abilities && c.abilities[ab] && c.abilities[ab].mod != null)
+            ? String(c.abilities[ab].mod)
+            : '+0';
+        header.innerHTML =
+            '<span class="skill-group-chevron"><i class="fa-solid fa-chevron-right"></i></span>' +
+            '<span class="skill-group-name">' + escapeHtml(ABILITY_FULL_NAMES[ab] || ab) +
+            ' <span class="skill-group-ab">(' + ab + ')</span></span>' +
+            '<span class="skill-group-mod" title="' + escapeHtml((ABILITY_FULL_NAMES[ab] || ab) + ' modifier') + '">' +
+                escapeHtml(abModHeader) +
+            '</span>';
+
+        header.addEventListener('click', () => {
+            skillGroupOpen[ab] = !skillGroupOpen[ab];
+            renderCharacterSkills(c);
+        });
+
+        const body = document.createElement('div');
+        body.className = 'skill-group-body';
+        if (!isOpen) body.hidden = true;
+
+        groupSkills
+            .slice()
+            .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+            .forEach(s => {
+                const abMod = (c.abilities && c.abilities[s.ab] && c.abilities[s.ab].mod) || '+0';
+                const isProf = String(s.val) !== String(abMod);
+                const item = document.createElement('div');
+                item.className = 'skill-item' + (s.custom ? ' is-custom' : '');
+                item.innerHTML =
+                    '<span class="skill-label">' +
+                        '<span class="prof-dot ' + (isProf ? 'proficient' : '') + '"></span>' +
+                        escapeHtml(s.label) +
+                        (s.custom ? ' <span class="skill-custom-tag">custom</span>' : '') +
+                    '</span>' +
+                    '<span class="skill-val" title="Roll ' + escapeHtml(s.label) + ' check!">' +
+                        escapeHtml(String(s.val)) +
+                    '</span>';
+
+                item.querySelector('.skill-val').addEventListener('click', () => {
+                    rollForCharacter(c.name, s.label + ' Skill Check', s.val);
+                });
+
+                if (s.custom) {
+                    const rm = document.createElement('button');
+                    rm.type = 'button';
+                    rm.className = 'skill-remove-btn';
+                    rm.title = 'Remove custom skill';
+                    rm.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+                    rm.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (!confirm('Remove custom skill "' + s.label + '"?')) return;
+                        c.customSkills = (c.customSkills || []).filter(cs =>
+                            (cs.key || skillKeyFromName(cs.name)) !== s.key
+                        );
+                        if (c.skills && Object.prototype.hasOwnProperty.call(c.skills, s.key)) {
+                            delete c.skills[s.key];
+                        }
+                        saveState();
+                        renderCharacterSkills(c);
+                    });
+                    item.appendChild(rm);
+                }
+
+                body.appendChild(item);
+            });
+
+        group.appendChild(header);
+        group.appendChild(body);
+        skillsCont.appendChild(group);
+    });
+
+    if (!anyVisible) {
+        const empty = document.createElement('p');
+        empty.className = 'skills-empty';
+        empty.textContent = q ? 'No skills match your search.' : 'No skills listed.';
+        skillsCont.appendChild(empty);
+    }
+}
+
+function addCustomSkillFromForm() {
+    const c = getActiveCharacter();
+    if (!c) {
+        alert('Select a character first.');
+        return;
+    }
+    const nameEl = document.getElementById('skill-name-input');
+    const modEl = document.getElementById('skill-mod-input');
+    const abEl = document.getElementById('skill-ability-input');
+    const name = nameEl ? nameEl.value.trim() : '';
+    const ab = abEl ? String(abEl.value || 'INT').toUpperCase() : 'INT';
+    const mod = normalizeSkillModifier(modEl ? modEl.value : '+0');
+
+    if (!name) {
+        alert('Enter a skill name.');
+        if (nameEl) nameEl.focus();
+        return;
+    }
+    if (!ABILITY_FULL_NAMES[ab]) {
+        alert('Pick a valid ability.');
+        return;
+    }
+
+    if (!Array.isArray(c.customSkills)) c.customSkills = [];
+    if (!c.skills) c.skills = {};
+
+    // Case-insensitive duplicate against standard + custom
+    const all = getCharacterSkillEntries(c);
+    const dup = all.find(s => s.label.toLowerCase() === name.toLowerCase());
+    if (dup) {
+        // Update existing custom or override value on standard skill
+        if (dup.custom) {
+            const cs = c.customSkills.find(x => (x.key || skillKeyFromName(x.name)) === dup.key);
+            if (cs) {
+                cs.modifier = mod;
+                cs.ability = ab;
+                cs.name = name;
+            }
+        }
+        c.skills[dup.key] = mod;
+        // If standard skill, also store ability override? keep standard ab
+    } else {
+        let key = skillKeyFromName(name);
+        if (c.skills[key] != null || STANDARD_SKILL_LIST.some(s => s.key === key)) {
+            key = key + '_' + Date.now().toString(36);
+        }
+        c.customSkills.push({
+            key,
+            name,
+            ability: ab,
+            modifier: mod
+        });
+        c.skills[key] = mod;
+    }
+
+    // Open the ability group so the new skill is visible
+    skillGroupOpen[ab] = true;
+    saveState();
+    renderCharacterSkills(c);
+
+    const modal = document.getElementById('modal-add-skill');
+    if (modal) modal.style.display = 'none';
+    if (nameEl) nameEl.value = '';
+    if (modEl) modEl.value = '+0';
+    if (abEl) abEl.value = 'INT';
+}
+
+function initSkillsPanel() {
+    const search = document.getElementById('skills-search-input');
+    if (search && !search.dataset.bound) {
+        search.dataset.bound = '1';
+        search.addEventListener('input', () => {
+            const c = getActiveCharacter();
+            if (c) renderCharacterSkills(c, search.value);
+        });
+    }
+    const expandAll = document.getElementById('btn-skills-expand-all');
+    if (expandAll && !expandAll.dataset.bound) {
+        expandAll.dataset.bound = '1';
+        expandAll.addEventListener('click', () => {
+            Object.keys(skillGroupOpen).forEach(k => { skillGroupOpen[k] = true; });
+            const c = getActiveCharacter();
+            if (c) renderCharacterSkills(c);
+        });
+    }
+    const collapseAll = document.getElementById('btn-skills-collapse-all');
+    if (collapseAll && !collapseAll.dataset.bound) {
+        collapseAll.dataset.bound = '1';
+        collapseAll.addEventListener('click', () => {
+            Object.keys(skillGroupOpen).forEach(k => { skillGroupOpen[k] = false; });
+            const searchEl = document.getElementById('skills-search-input');
+            if (searchEl) searchEl.value = '';
+            const c = getActiveCharacter();
+            if (c) renderCharacterSkills(c);
+        });
+    }
+    const addBtn = document.getElementById('btn-skill-add');
+    if (addBtn && !addBtn.dataset.bound) {
+        addBtn.dataset.bound = '1';
+        addBtn.addEventListener('click', () => {
+            if (!getActiveCharacter()) {
+                alert('Select a character first.');
+                return;
+            }
+            const modal = document.getElementById('modal-add-skill');
+            const name = document.getElementById('skill-name-input');
+            const mod = document.getElementById('skill-mod-input');
+            const ab = document.getElementById('skill-ability-input');
+            if (name) name.value = '';
+            if (mod) mod.value = '+0';
+            if (ab) ab.value = 'INT';
+            if (modal) modal.style.display = 'flex';
+            if (name) setTimeout(() => name.focus(), 50);
+        });
+    }
+    const saveBtn = document.getElementById('btn-save-skill');
+    if (saveBtn && !saveBtn.dataset.bound) {
+        saveBtn.dataset.bound = '1';
+        saveBtn.addEventListener('click', () => addCustomSkillFromForm());
+    }
+    const nameInput = document.getElementById('skill-name-input');
+    if (nameInput && !nameInput.dataset.bound) {
+        nameInput.dataset.bound = '1';
+        nameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addCustomSkillFromForm();
+            }
+        });
+    }
+}
+
 function renderSelectedCharacter() {
     const active = getActiveCampaign();
     if (!active) return;
@@ -1258,9 +2215,9 @@ function renderSelectedCharacter() {
     const c = active.characters[state.activeCharacterId];
     if (!c) {
         // No character found panel placeholder
-        updateCharSheetChrome();
         return;
     }
+
 
     updateCharSheetChrome();
     
@@ -1274,6 +2231,7 @@ function renderSelectedCharacter() {
     // Combat specs
     document.getElementById('char-hp-current').innerText = c.hp.current;
     document.getElementById('char-hp-max').innerText = c.hp.max;
+    updateCharacterHpColor(c.hp.current, c.hp.max);
     document.getElementById('char-ac').innerText = c.ac;
     document.getElementById('char-speed').innerText = c.speed || '30 ft';
     
@@ -1283,107 +2241,62 @@ function renderSelectedCharacter() {
         rollForCharacter(c.name, 'Initiative Check', initVal);
     };
     
-    // Backstory
-    document.getElementById('char-backstory').innerText = c.backstory || 'No biography written.';
-    document.getElementById('char-equipment').innerText = c.equipment || 'No items listed.';
+    // Backstory & traits (full-width block under sheet)
+    renderBackstoryAndTraits(c);
+
+    // Equipment inventory — 4-column grid of line items
+    renderEquipmentGrid(c.equipment);
     
-    // Abilities list
+    // Abilities list: Score | Modifiers | Saving Throws
     const abCont = document.getElementById('char-abilities-container');
     abCont.innerHTML = '';
     
     const abilityOrder = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
+    if (!c.saves) c.saves = {};
     abilityOrder.forEach(ab => {
         if (!c.abilities[ab]) {
             c.abilities[ab] = { score: 10, mod: '+0' };
         }
         const score = c.abilities[ab].score;
         const mod = c.abilities[ab].mod;
+        const saveVal = (c.saves[ab] != null && c.saves[ab] !== '')
+            ? c.saves[ab]
+            : mod;
+        const saveStr = String(saveVal);
+        const modStr = String(mod);
+        const isProf = !!(c.saveProfs && c.saveProfs.includes(ab)) ||
+            (saveStr !== modStr && saveStr.replace(/^\+/, '') !== modStr.replace(/^\+/, ''));
         
         const card = document.createElement('div');
         card.className = 'ability-card';
         card.innerHTML = `
             <span class="ability-name">${ab}</span>
-            <span class="ability-mod" title="Click to roll ${ab} check!">${mod}</span>
-            <span class="ability-score">${score}</span>
+            <div class="ability-stats-row">
+                <span class="ability-score" title="${ab} score">${score}</span>
+                <span class="ability-mod" title="Click to roll ${ab} check!">${mod}</span>
+                <span class="ability-save ${isProf ? 'is-proficient' : ''}" title="Click to roll ${ab} saving throw!">${saveStr}</span>
+            </div>
         `;
         
         card.querySelector('.ability-mod').addEventListener('click', () => {
             rollForCharacter(c.name, `${ab} Ability Check`, mod);
         });
+        card.querySelector('.ability-save').addEventListener('click', () => {
+            rollForCharacter(c.name, `${ab} Saving Throw`, saveStr);
+        });
         
         abCont.appendChild(card);
     });
     
-    // Saving throws list
+    // Extra (non-ability) saving throws — reserved for future; keep container empty for now
     const savesCont = document.getElementById('char-saves-container');
-    savesCont.innerHTML = '';
+    if (savesCont) {
+        savesCont.innerHTML = '';
+        savesCont.hidden = true;
+    }
     
-    Object.keys(c.saves).forEach(save => {
-        const val = c.saves[save];
-        const isProf = val !== c.abilities[save].mod;
-        
-        const item = document.createElement('div');
-        item.className = 'save-item';
-        item.innerHTML = `
-            <span class="save-label">
-                <span class="prof-dot ${isProf ? 'proficient' : ''}"></span>
-                ${save} Save
-            </span>
-            <span class="save-val" title="Roll ${save} Saving Throw!">${val}</span>
-        `;
-        
-        item.querySelector('.save-val').addEventListener('click', () => {
-            rollForCharacter(c.name, `${save} Saving Throw`, val);
-        });
-        
-        savesCont.appendChild(item);
-    });
-    
-    // Skills list
-    const skillsCont = document.getElementById('char-skills-container');
-    skillsCont.innerHTML = '';
-    
-    const skillList = [
-        { key: 'acrobatics', label: 'Acrobatics', ab: 'DEX' },
-        { key: 'animalHandling', label: 'Animal Handling', ab: 'WIS' },
-        { key: 'arcana', label: 'Arcana', ab: 'INT' },
-        { key: 'athletics', label: 'Athletics', ab: 'STR' },
-        { key: 'deception', label: 'Deception', ab: 'CHA' },
-        { key: 'history', label: 'History', ab: 'INT' },
-        { key: 'insight', label: 'Insight', ab: 'WIS' },
-        { key: 'intimidation', label: 'Intimidation', ab: 'CHA' },
-        { key: 'investigation', label: 'Investigation', ab: 'INT' },
-        { key: 'medicine', label: 'Medicine', ab: 'WIS' },
-        { key: 'nature', label: 'Nature', ab: 'INT' },
-        { key: 'perception', label: 'Perception', ab: 'WIS' },
-        { key: 'performance', label: 'Performance', ab: 'CHA' },
-        { key: 'persuasion', label: 'Persuasion', ab: 'CHA' },
-        { key: 'religion', label: 'Religion', ab: 'INT' },
-        { key: 'sleightOfHand', label: 'Sleight of Hand', ab: 'DEX' },
-        { key: 'stealth', label: 'Stealth', ab: 'DEX' },
-        { key: 'survival', label: 'Survival', ab: 'WIS' }
-    ];
-    
-    skillList.forEach(s => {
-        const val = c.skills[s.key] || '+0';
-        const isProf = val !== c.abilities[s.ab].mod;
-        
-        const item = document.createElement('div');
-        item.className = 'skill-item';
-        item.innerHTML = `
-            <span class="skill-label">
-                <span class="prof-dot ${isProf ? 'proficient' : ''}"></span>
-                ${s.label} <span style="font-size: 0.7rem; color: var(--text-muted);">(${s.ab})</span>
-            </span>
-            <span class="skill-val" title="Roll ${s.label} check!">${val}</span>
-        `;
-        
-        item.querySelector('.skill-val').addEventListener('click', () => {
-            rollForCharacter(c.name, `${s.label} Skill Check`, val);
-        });
-        
-        skillsCont.appendChild(item);
-    });
+    // Skills list (searchable, collapsible by ability)
+    renderCharacterSkills(c);
     
     // Weapons and attacks list
     const weaponsCont = document.getElementById('char-weapons-container');
@@ -1523,17 +2436,26 @@ function renderSelectedCharacter() {
     
     let hasSlots = false;
     if (c.spellcasting && c.spellcasting.slots) {
-        Object.keys(c.spellcasting.slots).forEach(lvl => {
+        // Stable order lvl1, lvl2, ...
+        const levels = Object.keys(c.spellcasting.slots).sort((a, b) => {
+            const na = parseInt(String(a).replace(/\D/g, ''), 10) || 0;
+            const nb = parseInt(String(b).replace(/\D/g, ''), 10) || 0;
+            return na - nb;
+        });
+        levels.forEach(lvl => {
             const slot = c.spellcasting.slots[lvl];
             if (slot.total > 0) {
                 hasSlots = true;
                 
                 const slotNum = lvl.replace('lvl', '');
+                const expended = slot.expended || 0;
+                const remaining = Math.max(0, slot.total - expended);
                 const row = document.createElement('div');
                 row.className = 'spell-slot-row';
                 
                 const label = document.createElement('span');
-                label.innerText = `Level ${slotNum} Slots (${slot.total})`;
+                label.className = 'spell-slot-label';
+                label.innerText = `Level ${slotNum} Slot (${remaining}/${slot.total})`;
                 row.appendChild(label);
                 
                 const bubbles = document.createElement('div');
@@ -1541,7 +2463,7 @@ function renderSelectedCharacter() {
                 
                 for (let i = 0; i < slot.total; i++) {
                     const bubble = document.createElement('span');
-                    bubble.className = `slot-bubble ${i < (slot.total - (slot.expended || 0)) ? 'active' : 'expended'}`;
+                    bubble.className = `slot-bubble ${i < remaining ? 'active' : 'expended'}`;
                     
                     bubble.addEventListener('click', () => {
                         const currentExpended = slot.expended || 0;
@@ -1558,6 +2480,24 @@ function renderSelectedCharacter() {
                 }
                 
                 row.appendChild(bubbles);
+
+                const minus = document.createElement('button');
+                minus.type = 'button';
+                minus.className = 'spell-slot-minus';
+                minus.title = remaining > 0
+                    ? `Expend one Level ${slotNum} slot`
+                    : `No Level ${slotNum} slots left`;
+                minus.innerHTML = '<i class="fa-solid fa-minus"></i>';
+                minus.disabled = remaining <= 0;
+                minus.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if ((slot.expended || 0) >= slot.total) return;
+                    slot.expended = (slot.expended || 0) + 1;
+                    saveState();
+                    renderSelectedCharacter();
+                });
+                row.appendChild(minus);
+
                 slotsCont.appendChild(row);
             }
         });
@@ -2148,6 +3088,15 @@ function initCombatPanel() {
     document.getElementById('btn-reset-combat').addEventListener('click', () => {
         resetCombatTracker();
     });
+
+    const sortBtn = document.getElementById('btn-sort-init');
+    if (sortBtn) {
+        sortBtn.addEventListener('click', () => {
+            sortCombatantsByInitiative();
+            renderInitiativeList();
+            saveCombatNow();
+        });
+    }
     
     document.getElementById('btn-add-combatant-modal').addEventListener('click', () => {
         document.getElementById('init-name-input').value = '';
@@ -2158,41 +3107,301 @@ function initCombatPanel() {
     });
 }
 
+/** Don't let poll stomp combat for a few seconds after a local combat edit. */
+let _suppressCombatSyncUntil = 0;
+function markCombatLocalEdit(ms) {
+    _suppressCombatSyncUntil = Date.now() + (typeof ms === 'number' ? ms : 8000);
+}
+
+/**
+ * Persist combat tracker immediately (not only via debounced full smartSave).
+ * Prevents Round 1 flash → poll restore Round 2.
+ */
+async function saveCombatNow() {
+    markCombatLocalEdit(10000);
+    saveLocalUi();
+    try {
+        localStorage.setItem('dnd_campaign_state', JSON.stringify({
+            campaigns: state.campaigns,
+            activeCampaignId: state.activeCampaignId,
+            combatants: state.combatants,
+            activeCombatantIndex: state.activeCombatantIndex,
+            combatRound: state.combatRound,
+            rollHistory: state.rollHistory
+        }));
+    } catch (e) { /* ignore */ }
+
+    if (!IS_SERVER_MODE) return true;
+
+    const camp = getActiveCampaign();
+    if (!camp) return false;
+    const cid = camp.id;
+    const revKey = 'combat:' + cid;
+    let baseRevision = state.revisions && state.revisions[revKey];
+
+    setSyncStatus('Saving combat…', 'warn');
+    try {
+        // Refresh revision if missing
+        if (typeof baseRevision !== 'number') {
+            await loadState();
+            // loadState may have been suppressed for combat fields
+            baseRevision = state.revisions && state.revisions[revKey];
+            if (typeof baseRevision !== 'number') baseRevision = 0;
+        }
+
+        const attempt = async (rev) => {
+            const res = await fetch('/api/combat/' + encodeURIComponent(cid), {
+                method: 'PUT',
+                headers: sessionHeaders(),
+                body: JSON.stringify({
+                    baseRevision: rev,
+                    data: {
+                        combatants: state.combatants,
+                        activeCombatantIndex: state.activeCombatantIndex,
+                        combatRound: state.combatRound,
+                        rollHistory: state.rollHistory
+                    }
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            return { res, data };
+        };
+
+        let { res, data } = await attempt(baseRevision);
+        if (res.status === 409 && typeof data.currentRevision === 'number') {
+            // Retry once with server revision but OUR combat payload
+            ({ res, data } = await attempt(data.currentRevision));
+        }
+        if (res.status === 404 || (res.status === 409 && baseRevision === 0)) {
+            // No combat doc yet — full save path
+            await saveStateToServer();
+            markCombatLocalEdit(3000);
+            setSyncStatus('Saved', 'ok');
+            return true;
+        }
+        if (!res.ok) {
+            console.error('Combat save failed', data);
+            setSyncStatus('Combat save failed', 'err');
+            // Keep local combat visible
+            markCombatLocalEdit(15000);
+            return false;
+        }
+        if (typeof data.revision === 'number') {
+            if (!state.revisions) state.revisions = {};
+            state.revisions[revKey] = data.revision;
+        }
+        markCombatLocalEdit(4000);
+        setSyncStatus('Combat saved', 'ok');
+        return true;
+    } catch (e) {
+        console.error(e);
+        setSyncStatus('Offline', 'err');
+        markCombatLocalEdit(15000);
+        return false;
+    }
+}
+
+function sortCombatantsByInitiative() {
+    if (!state.combatants || state.combatants.length < 2) return;
+    const active = state.combatants[state.activeCombatantIndex];
+    state.combatants.sort((a, b) => {
+        const ai = parseInt(a.initiative, 10);
+        const bi = parseInt(b.initiative, 10);
+        const av = Number.isFinite(ai) ? ai : 0;
+        const bv = Number.isFinite(bi) ? bi : 0;
+        if (bv !== av) return bv - av;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    if (active) {
+        const i = state.combatants.indexOf(active);
+        state.activeCombatantIndex = i >= 0 ? i : 0;
+    }
+}
+
+function moveCombatant(idx, dir) {
+    const arr = state.combatants;
+    const j = idx + dir;
+    if (j < 0 || j >= arr.length) return;
+    const activeName = arr[state.activeCombatantIndex] && arr[state.activeCombatantIndex].name;
+    const tmp = arr[idx];
+    arr[idx] = arr[j];
+    arr[j] = tmp;
+    // Keep "whose turn" on the same creature when possible
+    if (activeName) {
+        const ni = arr.findIndex(c => c.name === activeName);
+        if (ni >= 0) state.activeCombatantIndex = ni;
+    }
+    renderInitiativeList();
+    saveCombatNow();
+}
+
+function getDiceRollerName() {
+    try {
+        if (window.SeatSession && SeatSession.get()) {
+            const seat = SeatSession.get();
+            if (seat.role === 'dm') {
+                return seat.label ? ('DM (' + seat.label + ')') : 'DM';
+            }
+            // Prefer character display name from campaign state
+            const camp = typeof getActiveCampaign === 'function' ? getActiveCampaign() : null;
+            const charId = seat.characterId;
+            if (camp && camp.characters && charId && camp.characters[charId]) {
+                const c = camp.characters[charId];
+                const nm = c.name || charId;
+                if (seat.label && seat.label !== nm && seat.label !== charId) {
+                    return nm + ' (' + seat.label + ')';
+                }
+                if (c.player) return nm + ' (' + c.player + ')';
+                return nm;
+            }
+            if (charId) {
+                return seat.label ? (charId + ' (' + seat.label + ')') : charId;
+            }
+            if (seat.label) return seat.label;
+        }
+    } catch (e) { /* ignore */ }
+    return 'Dice Tray';
+}
+
 function rollDie(sides) {
     return Math.floor(Math.random() * sides) + 1;
 }
 
+/** d2 / coin: 1 = Yes, 2 = No (True/False style). */
+function formatDieFace(sides, n) {
+    if (sides === 2) return n === 1 ? 'Yes' : 'No';
+    return String(n);
+}
+
+function getDiceCount() {
+    const el = document.getElementById('dice-count-val');
+    let n = el ? parseInt(el.value, 10) : 1;
+    if (!Number.isFinite(n) || n < 1) n = 1;
+    if (n > 99) n = 99;
+    return n;
+}
+
+function resetDiceCountToOne() {
+    const el = document.getElementById('dice-count-val');
+    if (el) el.value = '1';
+}
+
+function renderDiceFaces(faces, opts) {
+    const facesEl = document.getElementById('dice-roll-faces');
+    if (!facesEl) return;
+    facesEl.innerHTML = '';
+    const list = faces && faces.length ? faces : ['—'];
+    list.forEach((face, i) => {
+        const pill = document.createElement('span');
+        pill.className = 'dice-face-pill';
+        if (opts && opts.critIndexes && opts.critIndexes.has(i)) {
+            pill.classList.add('crit-success');
+        }
+        if (opts && opts.failIndexes && opts.failIndexes.has(i)) {
+            pill.classList.add('crit-fail');
+        }
+        pill.textContent = face;
+        facesEl.appendChild(pill);
+    });
+}
+
 function rollDice(sides) {
-    const resultEl = document.getElementById('dice-roll-result');
+    const facesEl = document.getElementById('dice-roll-faces');
+    const totalEl = document.getElementById('dice-roll-result');
     const detailEl = document.getElementById('dice-roll-detail');
     const modInput = document.getElementById('dice-mod-val');
-    const modifier = parseInt(modInput.value) || 0;
+    const modifier = parseInt(modInput.value, 10) || 0;
+    const count = getDiceCount();
+    const isCoin = sides === 2;
+    const roller = getDiceRollerName();
     
     playDiceSound();
     
-    resultEl.classList.remove('dice-roll-animation');
-    void resultEl.offsetWidth;
-    resultEl.classList.add('dice-roll-animation');
+    // Clear prior result layout
+    if (facesEl) {
+        facesEl.classList.remove('dice-roll-animation');
+        void facesEl.offsetWidth;
+        facesEl.classList.add('dice-roll-animation');
+    }
+    if (totalEl) {
+        totalEl.classList.remove('dice-roll-animation');
+    }
     
     let counter = 0;
     const interval = setInterval(() => {
-        resultEl.innerText = rollDie(sides);
+        // Spin preview: random faces
+        const preview = [];
+        for (let i = 0; i < count; i++) {
+            preview.push(isCoin ? (Math.random() < 0.5 ? 'Yes' : 'No') : String(rollDie(sides)));
+        }
+        renderDiceFaces(preview);
+        if (totalEl) totalEl.textContent = '…';
         counter++;
         if (counter > 10) {
             clearInterval(interval);
             
-            const roll = rollDie(sides);
-            const total = roll + modifier;
-            resultEl.innerText = total;
-            
-            let detailText = `Rolled 1d${sides}: ${roll}`;
-            if (modifier !== 0) {
-                detailText += ` ${modifier >= 0 ? '+' : '-'} ${Math.abs(modifier)} modifier = ${total}`;
+            const rolls = [];
+            for (let i = 0; i < count; i++) rolls.push(rollDie(sides));
+            const sum = rolls.reduce((a, b) => a + b, 0);
+            const total = sum + modifier;
+            const faces = rolls.map(r => formatDieFace(sides, r));
+            const rollName = `${count}d${sides}`;
+
+            const critIndexes = new Set();
+            const failIndexes = new Set();
+            if (sides === 20) {
+                rolls.forEach((r, i) => {
+                    if (r === 20) critIndexes.add(i);
+                    if (r === 1) failIndexes.add(i);
+                });
             }
-            detailEl.innerText = detailText;
+
+            renderDiceFaces(faces, { critIndexes, failIndexes });
+
+            // Sum line under the individual dice
+            let totalLine;
+            if (isCoin && count === 1) {
+                totalLine = faces[0];
+            } else if (isCoin) {
+                const yes = rolls.filter(r => r === 1).length;
+                const no = count - yes;
+                totalLine = modifier !== 0
+                    ? `${yes} Yes / ${no} No · sum ${sum}${modifier >= 0 ? ' + ' : ' − '}${Math.abs(modifier)} = ${total}`
+                    : `${yes} Yes / ${no} No · sum ${sum}`;
+            } else if (count === 1 && modifier === 0) {
+                totalLine = `Total: ${total}`;
+            } else if (modifier !== 0) {
+                totalLine = `Total: ${sum} ${modifier >= 0 ? '+' : '−'} ${Math.abs(modifier)} = ${total}`;
+            } else {
+                totalLine = `Total: ${sum}`;
+            }
+            if (totalEl) {
+                totalEl.textContent = totalLine;
+                totalEl.classList.add('dice-roll-animation');
+            }
             
-            logRoll('Dice Tray', `1d${sides}`, total, detailText, roll);
+            let detailText = `${roller} rolled ${rollName}` + (isCoin ? ' (coin)' : '');
+            if (isCoin) {
+                const yes = rolls.filter(r => r === 1).length;
+                const no = count - yes;
+                detailText += count === 1
+                    ? `: ${faces[0]}`
+                    : `: ${faces.join(', ')} → ${yes} Yes / ${no} No`;
+            } else if (count === 1) {
+                detailText += `: ${rolls[0]}`;
+            } else {
+                detailText += `: [${rolls.join(' + ')}] = ${sum}`;
+            }
+            if (modifier !== 0 && !(isCoin && count === 1 && false)) {
+                detailText += ` ${modifier >= 0 ? '+' : '−'} ${Math.abs(modifier)} = ${total}`;
+            }
+            if (detailEl) detailEl.innerText = detailText;
+            
+            const critDie = sides === 20 && count === 1 ? rolls[0] : (sides === 20 ? Math.max(...rolls) : 10);
+            const historyTotal = isCoin && count === 1 ? faces[0] : total;
+            logRoll(roller, rollName + (isCoin ? ' (coin)' : ''), historyTotal, detailText, critDie);
             renderRollHistory();
+            resetDiceCountToOne();
         }
     }, 40);
 }
@@ -2207,7 +3416,7 @@ function logRoll(roller, rollName, total, detail, rawDieResult = 10) {
     
     state.rollHistory.unshift({
         id: Date.now(),
-        roller,
+        roller: roller || getDiceRollerName(),
         rollName,
         total,
         detail,
@@ -2233,16 +3442,21 @@ function renderRollHistory() {
     
     state.rollHistory.forEach(item => {
         const row = document.createElement('div');
-        row.className = `history-item ${item.type}`;
-        
+        row.className = `history-item ${item.type || ''}`;
+        const who = item.roller || 'Unknown';
+        const what = item.rollName || 'Roll';
+        const detail = item.detail || '';
         row.innerHTML = `
-            <div>
-                <strong>${item.roller}</strong> - <span style="color: var(--border-gold);">${item.rollName}</span>
-                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">${item.detail}</div>
+            <div class="history-main">
+                <div class="history-who"><i class="fa-solid fa-user"></i> ${escapeHtml(String(who))}</div>
+                <div class="history-what">
+                    <span class="history-roll-name">${escapeHtml(String(what))}</span>
+                    <span class="history-detail">${escapeHtml(String(detail))}</span>
+                </div>
             </div>
-            <div style="text-align: right; display: flex; flex-direction: column; justify-content: space-between;">
-                <span style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 800; color: var(--border-gold);">${item.total}</span>
-                <span style="font-size: 0.65rem; color: var(--text-muted);">${item.time}</span>
+            <div class="history-aside">
+                <span class="history-total">${escapeHtml(String(item.total))}</span>
+                <span class="history-time">${escapeHtml(String(item.time || ''))}</span>
             </div>
         `;
         list.appendChild(row);
@@ -2275,7 +3489,17 @@ function renderInitiativeList() {
         }
         
         row.innerHTML = `
-            <div class="init-score-bubble">${c.initiative}</div>
+            <div class="init-order-btns">
+                <button type="button" class="map-ctrl-btn btn-init-up" data-index="${idx}" title="Move up in order" ${idx === 0 ? 'disabled' : ''}>
+                    <i class="fa-solid fa-chevron-up"></i>
+                </button>
+                <button type="button" class="map-ctrl-btn btn-init-down" data-index="${idx}" title="Move down in order" ${idx >= state.combatants.length - 1 ? 'disabled' : ''}>
+                    <i class="fa-solid fa-chevron-down"></i>
+                </button>
+            </div>
+            <div class="init-score-wrap" title="Edit initiative">
+                <input type="number" class="init-score-input" value="${c.initiative}" data-index="${idx}" aria-label="Initiative for ${c.name}">
+            </div>
             <div class="init-name">${c.name} ${c.isMonster ? '<span style="font-size:0.7rem; color:var(--accent-red); font-weight:bold;">[NPC]</span>' : ''}</div>
             <div class="init-hp-tracker">
                 <span style="font-size:0.75rem; color:var(--text-muted); margin-right:3px;">HP:</span>
@@ -2295,17 +3519,33 @@ function renderInitiativeList() {
         
         row.querySelector('.init-hp-val').addEventListener('change', (e) => {
             c.hp = parseInt(e.target.value) || 0;
-            saveState();
+            saveCombatNow();
+        });
+
+        row.querySelector('.init-score-input').addEventListener('change', (e) => {
+            c.initiative = parseInt(e.target.value, 10);
+            if (!Number.isFinite(c.initiative)) c.initiative = 0;
+            e.target.value = c.initiative;
+            saveCombatNow();
+        });
+
+        row.querySelector('.btn-init-up').addEventListener('click', (e) => {
+            e.stopPropagation();
+            moveCombatant(idx, -1);
+        });
+        row.querySelector('.btn-init-down').addEventListener('click', (e) => {
+            e.stopPropagation();
+            moveCombatant(idx, 1);
         });
         
         row.querySelector('.btn-delete-combatant').addEventListener('click', (e) => {
             e.stopPropagation();
             state.combatants.splice(idx, 1);
             if (state.activeCombatantIndex >= state.combatants.length) {
-                state.activeCombatantIndex = 0;
+                state.activeCombatantIndex = Math.max(0, state.combatants.length - 1);
             }
-            saveState();
             renderInitiativeList();
+            saveCombatNow();
         });
         
         list.appendChild(row);
@@ -2321,21 +3561,24 @@ function nextCombatTurn() {
         state.combatRound++;
     }
     
-    saveState();
     renderInitiativeList();
+    saveCombatNow();
 }
 
 function resetCombatTracker() {
-    if (confirm("Reset initiative order and restart combat round to 1?")) {
-        state.combatRound = 1;
-        state.activeCombatantIndex = 0;
-        state.combatants = state.combatants.filter(c => !c.isMonster);
-        state.combatants.forEach(c => {
-            c.initiative = 0;
-        });
-        saveState();
-        renderInitiativeList();
+    if (!confirm('Reset combat tracker?\n\n• Round → 1\n• Turn → first in list\n• Initiative scores → 0\n• Remove NPC/monster rows (PCs stay)\n\nYou can edit initiative numbers and use ↑↓ to reorder after reset.')) {
+        return;
     }
+    state.combatRound = 1;
+    state.activeCombatantIndex = 0;
+    state.combatants = state.combatants.filter(c => !c.isMonster);
+    state.combatants.forEach(c => {
+        c.initiative = 0;
+    });
+    renderInitiativeList();
+    saveCombatNow().then(ok => {
+        if (ok) setSyncStatus('Combat reset', 'ok');
+    });
 }
 
 // ----------------------------------------------------
@@ -2607,9 +3850,9 @@ function initModals() {
         });
         
         sortInitiativeList();
-        saveState();
         renderInitiativeList();
         document.getElementById('modal-add-combatant').style.display = 'none';
+        saveCombatNow();
     });
 
     // Save Session Log
@@ -2971,82 +4214,358 @@ function renderCampaignSelector() {
 }
 
 // ----------------------------------------------------
-// 7. JSON Import / Export & Reset Database
+// 7. JSON Import / Export & Reset Database (F4 safer)
 // ----------------------------------------------------
+
+/** Shared campaign document only (no seat chrome, revisions, locks, local UI). */
+function buildSharedExportPayload() {
+    return {
+        exportedAt: new Date().toISOString(),
+        schemaHint: 'beer-club-dnd-campaign-v1',
+        campaigns: state.campaigns,
+        activeCampaignId: state.activeCampaignId,
+        combatants: state.combatants,
+        activeCombatantIndex: state.activeCombatantIndex,
+        combatRound: state.combatRound,
+        rollHistory: state.rollHistory
+    };
+}
+
+function canUseDestructiveAdmin() {
+    // With seats: Import/Reset are DM-only. Without seat API, allow (offline/file open).
+    if (!window.SeatSession || typeof SeatSession.get !== 'function') return true;
+    const seat = SeatSession.get();
+    if (!seat) return true;
+    return seat.role === 'dm' || SeatSession.isDm();
+}
+
+function updateAdminToolsChrome() {
+    const importBtn = document.getElementById('btn-import-trigger');
+    const resetBtn = document.getElementById('btn-reset-data');
+    const hint = document.getElementById('admin-tools-hint');
+    const allowed = canUseDestructiveAdmin();
+    if (importBtn) {
+        importBtn.disabled = !allowed;
+        importBtn.title = allowed
+            ? 'Preview then replace live state from a JSON file'
+            : 'DM seat required to import campaign data';
+    }
+    if (resetBtn) {
+        resetBtn.disabled = !allowed;
+        resetBtn.title = allowed
+            ? 'Reset table to blank D&D template (requires typing RESET)'
+            : 'DM seat required to reset the board';
+    }
+    if (hint) {
+        if (!allowed) {
+            hint.style.display = 'block';
+            hint.textContent = 'Import / Reset: DM seat only. Export is always available.';
+        } else {
+            hint.style.display = 'none';
+            hint.textContent = '';
+        }
+    }
+}
+
+function normalizeImportPayload(parsed) {
+    if (!parsed || typeof parsed !== 'object') {
+        return { ok: false, error: 'File is not a JSON object.' };
+    }
+    // Compatibility: very old single-campaign shape
+    if (parsed.characters && !parsed.campaigns) {
+        const oldCampaign = {
+            id: 'phandelver',
+            name: 'Imported Campaign',
+            mapImage: 'phandelver-map-exterior-player.webp',
+            characters: parsed.characters,
+            sessionLogs: parsed.sessionLogs || [],
+            mapMarkers: parsed.mapMarkers || [],
+            partyPosition: parsed.partyPosition || { x: 350, y: 480, lastUpdated: 'Imported state' }
+        };
+        parsed = {
+            campaigns: [oldCampaign],
+            activeCampaignId: 'phandelver',
+            combatants: parsed.combatants || [],
+            activeCombatantIndex: parsed.activeCombatantIndex || 0,
+            combatRound: parsed.combatRound || 1,
+            rollHistory: parsed.rollHistory || []
+        };
+    }
+    if (!Array.isArray(parsed.campaigns) || parsed.campaigns.length === 0) {
+        return { ok: false, error: 'Invalid structure: need a non-empty campaigns array.' };
+    }
+    for (let i = 0; i < parsed.campaigns.length; i++) {
+        const c = parsed.campaigns[i];
+        if (!c || !c.id || !c.name) {
+            return { ok: false, error: 'Campaign #' + (i + 1) + ' is missing id or name.' };
+        }
+        if (!c.characters || typeof c.characters !== 'object') {
+            return { ok: false, error: 'Campaign "' + c.name + '" is missing characters.' };
+        }
+    }
+    const payload = {
+        campaigns: parsed.campaigns,
+        activeCampaignId: parsed.activeCampaignId || parsed.campaigns[0].id,
+        combatants: Array.isArray(parsed.combatants) ? parsed.combatants : [],
+        activeCombatantIndex: typeof parsed.activeCombatantIndex === 'number' ? parsed.activeCombatantIndex : 0,
+        combatRound: typeof parsed.combatRound === 'number' ? parsed.combatRound : 1,
+        rollHistory: Array.isArray(parsed.rollHistory) ? parsed.rollHistory : []
+    };
+    if (!payload.campaigns.find(c => c.id === payload.activeCampaignId)) {
+        payload.activeCampaignId = payload.campaigns[0].id;
+    }
+    return { ok: true, payload };
+}
+
+function summarizeImportPayload(payload, meta) {
+    const camps = payload.campaigns || [];
+    let charTotal = 0;
+    const campLines = camps.map(c => {
+        const n = Object.keys(c.characters || {}).length;
+        charTotal += n;
+        const logs = (c.sessionLogs || []).length;
+        const markers = (c.mapMarkers || []).length;
+        return '<li><strong>' + escapeHtml(c.name) + '</strong> <span class="text-muted">(' +
+            escapeHtml(c.id) + ')</span> — ' + n + ' characters, ' + logs + ' logs, ' + markers + ' markers</li>';
+    }).join('');
+    const bytes = meta && meta.byteLength != null ? meta.byteLength : null;
+    const fileLabel = meta && meta.fileName ? escapeHtml(meta.fileName) : '—';
+    const sizeLabel = bytes != null
+        ? (bytes < 1024 ? bytes + ' B' : (bytes / 1024).toFixed(1) + ' KB')
+        : '—';
+    return (
+        '<dl>' +
+        '<dt>File</dt><dd>' + fileLabel + '</dd>' +
+        '<dt>Size</dt><dd>' + sizeLabel + '</dd>' +
+        '<dt>Campaigns</dt><dd>' + camps.length + '</dd>' +
+        '<dt>Characters</dt><dd>' + charTotal + ' total</dd>' +
+        '<dt>Active id</dt><dd><code>' + escapeHtml(payload.activeCampaignId) + '</code></dd>' +
+        '<dt>Combatants</dt><dd>' + (payload.combatants || []).length + '</dd>' +
+        '<dt>Roll history</dt><dd>' + (payload.rollHistory || []).length + ' entries</dd>' +
+        '<dt>Combat round</dt><dd>' + payload.combatRound + '</dd>' +
+        '</dl>' +
+        '<p style="margin:10px 0 4px;font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:600;">Campaigns in file</p>' +
+        '<ul>' + campLines + '</ul>'
+    );
+}
+
+let _pendingImportPayload = null;
+
+function downloadJsonBlob(obj, filename) {
+    const dataStr = JSON.stringify(obj, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const linkElement = document.createElement('a');
+    linkElement.href = url;
+    linkElement.download = filename;
+    document.body.appendChild(linkElement);
+    linkElement.click();
+    linkElement.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return blob.size;
+}
+
+async function applyFullStateReplace(payload, logLabel) {
+    state.campaigns = payload.campaigns;
+    state.activeCampaignId = payload.activeCampaignId;
+    state.combatants = payload.combatants || [];
+    state.activeCombatantIndex = payload.activeCombatantIndex || 0;
+    state.combatRound = payload.combatRound || 1;
+    state.rollHistory = payload.rollHistory || [];
+    state.revisions = {};
+    state.locks = {};
+    state.dmEditLocks = {};
+    state.offers = [];
+    state.claims = {};
+
+    const camp = getActiveCampaign();
+    if (camp && camp.characters) {
+        const keys = Object.keys(camp.characters);
+        if (!keys.includes(state.activeCharacterId)) {
+            state.activeCharacterId = keys[0] || null;
+        }
+    }
+
+    saveLocalUi();
+    try {
+        localStorage.setItem('dnd_campaign_state', JSON.stringify(buildSharedExportPayload()));
+    } catch (e) {
+        console.error(e);
+    }
+
+    let ok = true;
+    if (IS_SERVER_MODE) {
+        ok = await saveStateToServer();
+    }
+    renderCampaignSelector();
+    renderAll();
+    updateCharSheetChrome();
+    updateAdminToolsChrome();
+    if (ok) {
+        setSyncStatus(logLabel || 'Replaced', 'ok');
+        if (typeof logRoll === 'function') {
+            logRoll('System', logLabel || 'Data replace', '-', logLabel || 'State replaced');
+        }
+    }
+    return ok;
+}
+
 function initImportExport() {
+    updateAdminToolsChrome();
+
     document.getElementById('btn-export-data').addEventListener('click', () => {
-        const dataStr = JSON.stringify(state, null, 2);
-        const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-        const exportFileDefaultName = `dnd_campaign_export_${new Date().toISOString().split('T')[0]}.json`;
-        
-        const linkElement = document.createElement('a');
-        linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', exportFileDefaultName);
-        linkElement.click();
-        
-        logRoll('System', 'Data Export', '-', 'Database exported to JSON.');
+        try {
+            const payload = buildSharedExportPayload();
+            const name = `dnd_campaign_export_${new Date().toISOString().split('T')[0]}.json`;
+            const size = downloadJsonBlob(payload, name);
+            setSyncStatus('Exported ' + (size < 1024 ? size + ' B' : (size / 1024).toFixed(1) + ' KB'), 'ok');
+            if (typeof logRoll === 'function') {
+                logRoll('System', 'Data Export', '-', 'Database exported to JSON (Blob).');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Export failed: ' + (e.message || e));
+        }
     });
-    
+
     const fileInput = document.getElementById('file-import');
+    const importModal = document.getElementById('modal-import-preview');
+    const importSummary = document.getElementById('import-preview-summary');
+    const importConfirm = document.getElementById('import-confirm-input');
+    const importApply = document.getElementById('btn-import-apply');
+
     document.getElementById('btn-import-trigger').addEventListener('click', () => {
+        if (!canUseDestructiveAdmin()) {
+            alert('Import requires a DM seat.');
+            return;
+        }
+        fileInput.value = '';
         fileInput.click();
     });
-    
+
     fileInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (!file) return;
-        
+        if (!canUseDestructiveAdmin()) {
+            alert('Import requires a DM seat.');
+            fileInput.value = '';
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = (evt) => {
             try {
-                const parsed = JSON.parse(evt.target.result);
-                
-                // Compatibility conversion
-                if (parsed.characters && !parsed.campaigns) {
-                    const oldCampaign = {
-                        id: "phandelver",
-                        name: "Imported Campaign",
-                        mapImage: "phandelver-map-exterior-player.webp",
-                        characters: parsed.characters,
-                        sessionLogs: parsed.sessionLogs || [],
-                        mapMarkers: parsed.mapMarkers || [],
-                        partyPosition: parsed.partyPosition || { x: 350, y: 480, lastUpdated: "Imported state" }
-                    };
-                    parsed.campaigns = [oldCampaign];
-                    parsed.activeCampaignId = "phandelver";
-                    delete parsed.characters;
-                    delete parsed.sessionLogs;
-                    delete parsed.mapMarkers;
-                    delete parsed.partyPosition;
+                const text = String(evt.target.result || '');
+                const parsed = JSON.parse(text);
+                const norm = normalizeImportPayload(parsed);
+                _pendingImportPayload = null;
+                if (!norm.ok) {
+                    importSummary.innerHTML = '<p class="preview-error">' + escapeHtml(norm.error) + '</p>';
+                    importApply.disabled = true;
+                    if (importConfirm) importConfirm.value = '';
+                    if (importModal) importModal.style.display = 'flex';
+                    return;
                 }
-                
-                if (parsed.campaigns && parsed.campaigns.length > 0) {
-                    state = parsed;
-                    saveState();
-                    renderCampaignSelector();
-                    renderAll();
-                    alert('Campaign database imported successfully!');
-                    logRoll('System', 'Data Import', '-', 'Database imported successfully.');
-                } else {
-                    alert('Invalid file structure.');
+                _pendingImportPayload = norm.payload;
+                importSummary.innerHTML = summarizeImportPayload(norm.payload, {
+                    fileName: file.name,
+                    byteLength: text.length
+                });
+                if (importConfirm) {
+                    importConfirm.value = '';
+                    importApply.disabled = true;
                 }
+                if (importModal) importModal.style.display = 'flex';
+                if (importConfirm) setTimeout(() => importConfirm.focus(), 50);
             } catch (err) {
-                alert('Error parsing JSON.');
                 console.error(err);
+                importSummary.innerHTML = '<p class="preview-error">Could not parse JSON: ' +
+                    escapeHtml(err.message || String(err)) + '</p>';
+                importApply.disabled = true;
+                _pendingImportPayload = null;
+                if (importModal) importModal.style.display = 'flex';
             }
+        };
+        reader.onerror = () => {
+            alert('Could not read file.');
+            fileInput.value = '';
         };
         reader.readAsText(file);
     });
-    
+
+    if (importConfirm && importApply) {
+        importConfirm.addEventListener('input', () => {
+            const ok = importConfirm.value.trim().toUpperCase() === 'IMPORT' && !!_pendingImportPayload;
+            importApply.disabled = !ok;
+        });
+        importApply.addEventListener('click', async () => {
+            if (!canUseDestructiveAdmin()) {
+                alert('Import requires a DM seat.');
+                return;
+            }
+            if (!_pendingImportPayload || importConfirm.value.trim().toUpperCase() !== 'IMPORT') return;
+            importApply.disabled = true;
+            const payload = _pendingImportPayload;
+            _pendingImportPayload = null;
+            const ok = await applyFullStateReplace(payload, 'Data Import');
+            if (importModal) importModal.style.display = 'none';
+            fileInput.value = '';
+            if (importConfirm) importConfirm.value = '';
+            if (ok) {
+                alert('Campaign database imported successfully.');
+            } else {
+                alert('Import applied locally but server save failed. Check sync status and try Export / retry.');
+            }
+        });
+    }
+
+    const resetModal = document.getElementById('modal-reset-confirm');
+    const resetConfirm = document.getElementById('reset-confirm-input');
+    const resetApply = document.getElementById('btn-reset-apply');
+
     document.getElementById('btn-reset-data').addEventListener('click', () => {
-        if (confirm("WARNING: This will reset ALL campaigns, characters, session logs, and map markers to their initial template state.\n\nProceed?")) {
-            resetToDefaults();
+        if (!canUseDestructiveAdmin()) {
+            alert('Reset requires a DM seat.');
+            return;
+        }
+        if (resetConfirm) {
+            resetConfirm.value = '';
+            if (resetApply) resetApply.disabled = true;
+        }
+        if (resetModal) resetModal.style.display = 'flex';
+        if (resetConfirm) setTimeout(() => resetConfirm.focus(), 50);
+    });
+
+    if (resetConfirm && resetApply) {
+        resetConfirm.addEventListener('input', () => {
+            resetApply.disabled = resetConfirm.value.trim().toUpperCase() !== 'RESET';
+        });
+        resetApply.addEventListener('click', async () => {
+            if (!canUseDestructiveAdmin()) {
+                alert('Reset requires a DM seat.');
+                return;
+            }
+            if (resetConfirm.value.trim().toUpperCase() !== 'RESET') return;
+            resetApply.disabled = true;
+            const ok = await resetToDefaults();
             renderCampaignSelector();
             renderAll();
-            alert('Database reset.');
-        }
-    });
+            updateCharSheetChrome();
+            updateAdminToolsChrome();
+            if (resetModal) resetModal.style.display = 'none';
+            resetConfirm.value = '';
+            if (ok) {
+                if (typeof logRoll === 'function') {
+                    logRoll('System', 'Data Reset', '-', 'Board reset to blank D&D template.');
+                }
+                alert('Table reset to blank D&D template.');
+            } else {
+                alert('Reset applied locally but server save failed. Check sync status.');
+            }
+        });
+    }
 }
+
 
 // ----------------------------------------------------
 // Master Renderer

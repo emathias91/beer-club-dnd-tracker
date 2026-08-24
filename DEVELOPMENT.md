@@ -37,9 +37,9 @@ A **self-hosted campaign dashboard** for a home table:
 
 ## Current focus
 
-**Theme (next):** safer admin / first-run clarity and table QoL — Reset/Import gates, map asset UX, cheaper sync, backup restore UI.
+**Theme (next):** map asset UX (F6), cheaper sync (F8), backup restore UI (F9), multi-game board polish / blank game factory.
 
-**Theme (landed v1):** multi-device trust — middle-path split files, entry seats, claim/offer/DM force, DM prep lock + Characters-panel tools.
+**Theme (landed):** multi-device trust v1; F4 safer Import/Reset; **Game Board** landing with per-game table PIN + LMoP as a real game (blank D&D template for Reset).
 
 Design summary lives in **this file** (below) and in History. Detailed local planning notes stay on each contributor’s machine (not in git).
 
@@ -47,7 +47,9 @@ Design summary lives in **this file** (below) and in History. Detailed local pla
 
 | ID | Item | Status | Notes |
 |----|------|--------|--------|
-| F0 | Entry / seat page | **Done (v1)** | Map + campaign name + character list + DM PIN; claim before main app (`seat-entry.js`) |
+| F0 | Entry / seat page | **Done (v1)** | After game unlock; map + seats + DM Notes PIN |
+| F0b | Game Board + table PIN | **Done (v1)** | Dropdown of games; table PIN unlock; data under `games/<id>/` |
+| F0c | Blank D&D template | **Done (v1)** | Reset → empty table (not seed party); LMoP keeps live data |
 | F1 | Shared vs local UI state | **Done (v1)** | Zoom/tab local only (`dnd_local_ui`); not in server docs |
 | F2 | Split files + per-doc revision | **Done (v1)** | `lib/store.js`; migrate from monolith; `DATA_DIR/campaign/<id>/{meta,map,combat}.json` + `characters/*.json` |
 | F2b | Seat claim + helper offers | **Done (v1)** | Holder direct write; others → pending offer; Accept/Deny + summary |
@@ -58,13 +60,13 @@ Design summary lives in **this file** (below) and in History. Detailed local pla
 | F2g | Edit modal ability layout | **Done (v1)** | Ability scores stack vertically (STR→CHA), not 6-across |
 | F2h | Equipment inventory scroll UX | **Done (v1)** | Scroll host owns bar (arrow cursor); textarea keeps text caret; still scrolls |
 | F3 | Visible connection + save status | **Done (v1)** | `#sync-status` Live / Saving / Conflict / Offline |
-| F4 | Safer Reset & Import | **Backlog** | Gate or stronger confirm; Import preview; safer large export |
+| F4 | Safer Reset & Import | **Done (v1)** | Preview + type `IMPORT`; Reset type `RESET`; Blob export; full `/api/state` replace; Import/Reset DM-seat only |
 | F5 | Schema `version` on saves | **Done (v1)** | `schemaVersion: 2` in manifest |
 | F6 | Missing map / asset UX | **Backlog** | Clear in-app message when map file 404s |
 | F7 | localStorage vs server authority | **Done (v1)** | Server snapshot authoritative; local cache strips UI-only fields |
 | F8 | Full re-render / poll cost | **Backlog** | Cheaper sync when unchanged |
 | F9 | In-app restore from rolling backups | **Backlog** | Backups on disk; surface later |
-| F10 | DM-gated admin actions | **Backlog** | Reset, import, etc. |
+| F10 | DM-gated admin actions | **Partial (v1)** | Import/Reset DM-only via seats (F4); other admin still open |
 
 Update this table when focus changes.
 
@@ -73,7 +75,7 @@ Update this table when focus changes.
 - **Server/store:** versioned multi-file campaign store; one-time migrate from `campaign_state.json`; seats/sessions; claim; helper offers; DM force; prep lock.
 - **Client:** entry gate → claim → main app; piecewise saves (holder character + shared map/combat/meta); poll `/api/snapshot`; Accept/Deny / DM reload notices; sync chrome.
 - **DM Characters flow:** pick tab → **Lock This Sheet** → **Edit Character Specs** → save → **Unlock**; status line shows working-on / locked without early word-wrap.
-- **Not done yet:** push to shared `main`, map symlink/asset message, safer Reset/Import, in-app backup restore, cheaper poll.
+- **Not done yet:** map symlink/asset message (F6), cheaper poll (F8), full in-app backup restore (F9), remaining admin gates.
 
 ---
 
@@ -94,11 +96,11 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 
 ### P1 — footguns and first-run clarity
 
-4. **Reset / Import power** — **Open (F4 / F10)**  
-   Available in main UI to anyone who can open the URL. One confirm dialog is easy to accept by mistake; Import replaces live state.
+4. **Reset / Import power** — **Addressed (v1 / F4)** (+ partial F10)  
+   Import preview + type `IMPORT`; Reset type `RESET`; DM seat required when seats active; full server replace. Export uses Blob download.
 
-5. **Export via data-URI** — **Open**  
-   Can fail or choke on larger states; Blob download is more reliable.
+5. **Export via data-URI** — **Addressed (v1 / F4)**  
+   Blob + object URL download of shared document only.
 
 6. **No schema version** — **Addressed (v1 / F5)**  
    Manifest carries `schemaVersion: 2`.
@@ -185,8 +187,10 @@ Newest first. Record shared, meaningful changes (behavior, repo process, fixes).
 
 ### 2026-08-23
 
-- **DM / Characters UX polish (local/dev):** moved Lock/Unlock from sidebar onto Characters panel; fixed unlock enable (`locks` → `dmEditLocks`); **Edit Character Specs** disabled for DM until sheet locked; full-width nowrap status line; Edit modal ability scores vertical; Equipment inventory scroll host (scroll works; arrow cursor on scrollbar).
-- Documented completion of F0–F3, F5, F7, F2d–F2h in this file; next focus F4 / F6 / F8–F10.
+- **Game Board (F0b/F0c):** landing “Beer Club Game Board” with game dropdown; per-game **table PIN** (`/api/board/*`); campaign data under `DATA_DIR/games/<id>/` (LMoP migrated to `games/lmop`); Reset clears to **blank D&D** (not seed party). Seat select remains after unlock.
+- **F4 Safer Reset & Import:** Import preview modal + type `IMPORT`; Reset type `RESET`; Blob export; full `/api/state` replace; Import/Reset DM-seat only (partial F10).
+- **DM / Characters UX polish:** Lock/Unlock on Characters panel; Edit Specs gated on lock; status nowrap; vertical abilities; equipment scroll host.
+- Documented F0–F4, F0b/c in this file; next focus F6 / F8–F9 / remaining F10 / multi-game factory.
 - Removed agent-only local planning scratch from the repository (gitignored going forward); shared status remains in this file only.
 
 ### 2026-08-22
