@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('./lib/store');
+const board = require('./lib/board');
 
 const PORT = 8080;
 const ROOT = __dirname;
@@ -33,9 +34,8 @@ function dbPath() {
    ============================================================ */
 
 function dmPath() {
-    return process.env.DATA_DIR
-        ? path.join(process.env.DATA_DIR, 'dm_notes.json')
-        : path.join(ROOT, 'dm_notes.json');
+    // Per-game DM notes file (inside active game data root)
+    return path.join(store.dataRoot(), 'dm_notes.json');
 }
 
 function readDm() {
@@ -147,6 +147,12 @@ function sessionToken(req, parsed) {
         || '';
 }
 
+function gameAccessToken(req, parsed) {
+    return req.headers['x-game-token']
+        || (parsed && parsed.gameAccessToken)
+        || '';
+}
+
 function match(urlPath, pattern) {
     // pattern like /api/characters/:campaignId/:charId
     const pp = pattern.split('/').filter(Boolean);
@@ -160,12 +166,19 @@ function match(urlPath, pattern) {
     return params;
 }
 
-// Startup migration
+// Startup: board registry + per-game migrate
 try {
-    const m = store.migrateIfNeeded();
-    if (m.migrated) console.log('[boot] Split-file migration complete');
+    board.ensureReady();
+    const b = board.readBoard();
+    console.log('[boot] Game board ready —', (b.games || []).map(g => g.id).join(', '));
+    for (const g of b.games || []) {
+        store.runWithDataRoot(board.gameRoot(g.id), () => {
+            const m = store.migrateIfNeeded();
+            if (m.migrated) console.log('[boot] Split-file migration complete for', g.id);
+        });
+    }
 } catch (e) {
-    console.error('[boot] migrate failed:', e);
+    console.error('[boot] board/migrate failed:', e);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -173,9 +186,62 @@ const server = http.createServer(async (req, res) => {
     const urlPath = req.url.split('?')[0];
 
     try {
+        /* ---------- Game Board (no table token) ---------- */
+        if (urlPath === '/api/board' && req.method === 'GET') {
+            return json(res, 200, board.listGamesPublic());
+        }
+        if (urlPath === '/api/board/unlock' && req.method === 'POST') {
+            const ip = req.socket.remoteAddress || 'unknown';
+            const raw = await readBody(req, 1e5);
+            let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            const result = board.unlockGame(p.gameId, p.pin, ip);
+            return json(res, result.status, result);
+        }
+        if (urlPath === '/api/board/setup-pin' && req.method === 'POST') {
+            const ip = req.socket.remoteAddress || 'unknown';
+            const raw = await readBody(req, 1e5);
+            let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            const result = board.setupGamePin(p.gameId, p.pin, ip);
+            return json(res, result.status, result);
+        }
+        if (urlPath === '/api/board/leave' && req.method === 'POST') {
+            const raw = await readBody(req, 1e5);
+            let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            board.revokeAccessToken(gameAccessToken(req, p));
+            return json(res, 200, { ok: true });
+        }
+
+        /* ---------- Table APIs require game unlock token ---------- */
+        const isTableApi = urlPath.startsWith('/api/') && !urlPath.startsWith('/api/board');
+        if (isTableApi) {
+            const access = board.resolveAccessToken(gameAccessToken(req, null));
+            if (!access) {
+                return json(res, 401, {
+                    error: 'Game table locked. Unlock from the Beer Club Game Board first.',
+                    code: 'game_auth'
+                });
+            }
+            const gameDataRoot = board.gameRoot(access.gameId);
+            return await store.runWithDataRoot(gameDataRoot, async () => {
+                await handleTableApi(req, res, urlPath, access);
+            });
+        }
+
+        /* ---------- Static files ---------- */
+        await serveStatic(req, res, urlPath);
+    } catch (e) {
+        console.error('Request error:', e);
+        if (!res.headersSent) json(res, 500, { error: 'Internal server error' });
+    }
+});
+
+async function handleTableApi(req, res, urlPath, access) {
         /* ---------- Entry / seats ---------- */
         if (urlPath === '/api/entry' && req.method === 'GET') {
-            return json(res, 200, store.buildEntry());
+            const entry = store.buildEntry();
+            entry.gameId = access.gameId;
+            entry.gameName = (board.getGameMeta(access.gameId) || {}).name || access.gameId;
+            return json(res, 200, entry);
         }
 
         if (urlPath === '/api/seats/claim' && req.method === 'POST') {
@@ -305,22 +371,6 @@ const server = http.createServer(async (req, res) => {
             return json(res, result.status, result);
         }
 
-        if (params && req.method === 'GET') {
-            const doc = store.readDoc(store.characterPath(params.campaignId, params.charId));
-            if (!doc) return json(res, 404, { error: 'Not found' });
-            return json(res, 200, {
-                revision: doc.revision,
-                data: doc.data,
-                claim: doc.claim,
-                dmEditLock: doc.dmEditLock,
-                pendingOffers: (doc.pendingOffers || []).map(o => ({
-                    id: o.id, fromLabel: o.fromLabel, summary: o.summary, createdAt: o.createdAt, baseRevision: o.baseRevision
-                })),
-                lastDmForce: doc.lastDmForce
-            });
-        }
-
-        /* ---------- Combat / map / meta ---------- */
         params = match(urlPath, '/api/combat/:campaignId');
         if (params && req.method === 'PUT') {
             const raw = await readBody(req, 25 * 1024 * 1024);
@@ -345,25 +395,30 @@ const server = http.createServer(async (req, res) => {
             return json(res, result.status, result);
         }
 
-        /* ---------- Compat /api/state ---------- */
+        /* ---------- Full state (import/export/compat) ---------- */
         if (urlPath === '/api/state') {
             if (req.method === 'GET') {
                 store.migrateIfNeeded();
                 const snap = store.buildSnapshot();
-                if (snap) {
-                    // strip internal-only heavy fields for old clients optional — keep extras
-                    return json(res, 200, snap);
+                if (!snap) {
+                    return fs.readFile(dbPath(), 'utf8', (err, data) => {
+                        if (err) {
+                            const code = err.code === 'ENOENT' ? 404 : 500;
+                            return json(res, code, { error: code === 404 ? 'No state initialized' : err.code });
+                        }
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                        res.end(data);
+                    });
                 }
-                // fallback monolith
-                fs.readFile(dbPath(), 'utf8', (err, data) => {
-                    if (err) {
-                        const code = err.code === 'ENOENT' ? 404 : 500;
-                        return json(res, code, { error: code === 404 ? 'No state initialized' : err.code });
-                    }
-                    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-                    res.end(data);
+                // strip internal-only heavy fields for old clients optional — keep extras
+                return json(res, 200, {
+                    campaigns: snap.campaigns,
+                    activeCampaignId: snap.activeCampaignId,
+                    combatants: snap.combatants,
+                    activeCombatantIndex: snap.activeCombatantIndex,
+                    combatRound: snap.combatRound,
+                    rollHistory: snap.rollHistory
                 });
-                return;
             }
             if (req.method === 'POST') {
                 let body;
@@ -379,11 +434,26 @@ const server = http.createServer(async (req, res) => {
                     return json(res, 400, { error: 'Invalid JSON payload' });
                 }
                 if (!parsed || !Array.isArray(parsed.campaigns) || parsed.campaigns.length === 0) {
-                    return json(res, 400, { error: 'Refusing to save a state with no campaigns' });
+                    // Allow empty campaigns for blank template tables
+                    if (!parsed || !Array.isArray(parsed.campaigns)) {
+                        return json(res, 400, { error: 'Refusing to save: campaigns must be an array' });
+                    }
                 }
                 try {
                     // Always write split layout + keep monolith backup mirror
-                    store.writeSplitFromState(parsed);
+                    if (parsed.campaigns.length === 0) {
+                        // blank table: write empty manifest
+                        store.writeSplitFromState({
+                            campaigns: [],
+                            activeCampaignId: '',
+                            combatants: parsed.combatants || [],
+                            activeCombatantIndex: parsed.activeCombatantIndex || 0,
+                            combatRound: parsed.combatRound || 1,
+                            rollHistory: parsed.rollHistory || []
+                        });
+                    } else {
+                        store.writeSplitFromState(parsed);
+                    }
                     saveStateSafely(body, (err) => {
                         if (err) console.warn('monolith mirror save failed:', err.message);
                         json(res, 200, { success: true, schemaVersion: store.SCHEMA_VERSION });
@@ -397,7 +467,7 @@ const server = http.createServer(async (req, res) => {
             return json(res, 405, { error: 'Method Not Allowed' });
         }
 
-        /* ---------- DM notes (unchanged) ---------- */
+        /* ---------- DM notes (unchanged, per-game file) ---------- */
         if (urlPath.startsWith('/api/dm-notes')) {
             const ip = req.socket.remoteAddress || 'unknown';
             const send = (code, obj) => json(res, code, obj);
@@ -408,50 +478,49 @@ const server = http.createServer(async (req, res) => {
             }
 
             if (req.method === 'POST') {
-                let body;
-                try {
-                    body = await readBody(req, 5 * 1024 * 1024);
-                } catch (e) {
-                    return send(e.status || 500, { error: e.message });
-                }
-                let p;
-                try { p = JSON.parse(body || '{}'); }
-                catch (e) { return send(400, { error: 'Invalid JSON' }); }
-
+                const raw = await readBody(req, 2e6);
+                let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return send(400, { error: 'Invalid JSON' }); }
                 const wait = throttled(ip);
                 if (wait > 0) return send(429, { error: `Too many attempts. Try again in ${wait}s.` });
 
-                const dm = readDm();
-                const configured = !!(dm && dm.pinHash);
-
                 if (urlPath === '/api/dm-notes/setup') {
-                    if (configured) return send(409, { error: 'A PIN is already set.' });
                     const pin = String(p.pin || '');
                     if (pin.length < 4) return send(400, { error: 'PIN must be at least 4 characters.' });
+                    if (readDm() && readDm().pinHash) return send(409, { error: 'Already configured' });
                     const salt = crypto.randomBytes(16).toString('hex');
-                    writeDm({ salt, pinHash: hashPin(pin, salt), notes: '', updated: Date.now() });
+                    writeDm({ pinHash: hashPin(pin, salt), salt, notes: p.notes || '', updated: nowIsoSafe() });
                     return send(200, { ok: true });
                 }
-
-                if (!configured) return send(409, { error: 'No PIN set yet.' });
-                if (!pinValid(p.pin)) {
-                    noteFailure(ip);
-                    return send(401, { error: 'Incorrect PIN.' });
-                }
-                clearFailures(ip);
-
                 if (urlPath === '/api/dm-notes/unlock') {
-                    return send(200, { ok: true, notes: dm.notes || '' });
+                    if (!pinValid(p.pin)) {
+                        noteFailure(ip);
+                        return send(401, { error: 'Incorrect PIN.' });
+                    }
+                    clearFailures(ip);
+                    const dm = readDm();
+                    return send(200, { notes: (dm && dm.notes) || '', updated: dm && dm.updated });
                 }
                 if (urlPath === '/api/dm-notes/save') {
-                    dm.notes = typeof p.notes === 'string' ? p.notes : '';
-                    dm.updated = Date.now();
+                    if (!pinValid(p.pin)) {
+                        noteFailure(ip);
+                        return send(401, { error: 'Incorrect PIN.' });
+                    }
+                    clearFailures(ip);
+                    const dm = readDm() || {};
+                    dm.notes = p.notes || '';
+                    dm.updated = nowIsoSafe();
                     writeDm(dm);
                     return send(200, { ok: true, updated: dm.updated });
                 }
                 if (urlPath === '/api/dm-notes/change-pin') {
                     const next = String(p.newPin || '');
                     if (next.length < 4) return send(400, { error: 'PIN must be at least 4 characters.' });
+                    if (!pinValid(p.pin)) {
+                        noteFailure(ip);
+                        return send(401, { error: 'Incorrect PIN.' });
+                    }
+                    clearFailures(ip);
+                    const dm = readDm() || {};
                     const salt = crypto.randomBytes(16).toString('hex');
                     dm.salt = salt;
                     dm.pinHash = hashPin(next, salt);
@@ -463,7 +532,14 @@ const server = http.createServer(async (req, res) => {
             return send(405, { error: 'Method Not Allowed' });
         }
 
-        /* ---------- Static files ---------- */
+        return json(res, 404, { error: 'Not found' });
+}
+
+function nowIsoSafe() {
+    return new Date().toISOString();
+}
+
+async function serveStatic(req, res, urlPath) {
         let decoded;
         try {
             decoded = decodeURIComponent(urlPath);
@@ -489,19 +565,23 @@ const server = http.createServer(async (req, res) => {
             || base === 'dm_notes.json.tmp'
             || base === 'manifest.json'
             || base === 'sessions.json'
+            || base === 'board.json'
+            || base === 'access.json'
             || base.endsWith('.tmp')) {
             res.writeHead(403, { 'Content-Type': 'text/html' });
             res.end('<h1>403 Forbidden</h1>', 'utf-8');
             return;
         }
 
-        // Block data dir tree if under ROOT
-        const dataDir = store.dataRoot();
-        if (filePath === dataDir || filePath.startsWith(dataDir + path.sep)) {
-            // Allow only if DATA_DIR is outside ROOT — if inside, forbid JSON data
+        // Block data dir trees (legacy root or games/*)
+        const boardRoot = board.boardRoot();
+        if (filePath === boardRoot || filePath.startsWith(boardRoot + path.sep)) {
             if (filePath.includes(path.sep + 'campaign' + path.sep)
+                || filePath.includes(path.sep + 'games' + path.sep)
                 || base === 'manifest.json'
-                || base === 'sessions.json') {
+                || base === 'sessions.json'
+                || base === 'board.json'
+                || base === 'access.json') {
                 res.writeHead(403, { 'Content-Type': 'text/html' });
                 res.end('<h1>403 Forbidden</h1>', 'utf-8');
                 return;
@@ -531,18 +611,18 @@ const server = http.createServer(async (req, res) => {
                 res.end(content, 'utf-8');
             }
         });
-    } catch (e) {
-        console.error('Request error:', e);
-        if (!res.headersSent) json(res, 500, { error: 'Internal server error' });
-    }
-});
+}
 
 server.listen(PORT, () => {
     console.log('==================================================');
-    console.log('Beer Club D&D Campaign Tracker');
+    console.log('Beer Club Game Board');
     console.log(`Listening on port ${PORT}`);
-    console.log(`Data dir: ${store.dataRoot()}`);
-    console.log(`Split layout: ${store.hasSplitLayout()}`);
-    console.log(`Keeping up to ${MAX_BACKUPS} monolith backups.`);
+    console.log(`Board data: ${board.boardRoot()}`);
+    try {
+        const b = board.listGamesPublic();
+        console.log(`Games: ${b.games.map(g => g.id).join(', ') || '(none)'}`);
+    } catch (e) { /* ignore */ }
+    console.log(`Keeping up to ${MAX_BACKUPS} monolith backups per game.`);
     console.log('==================================================');
 });
+
