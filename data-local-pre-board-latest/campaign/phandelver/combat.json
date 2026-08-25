@@ -1,0 +1,238 @@
+{
+  "revision": 27,
+  "updatedAt": "2026-08-23T14:36:34.480Z",
+  "data": {
+    "combatants": [
+      {
+        "name": "Elowen",
+        "initiative": 0,
+        "hp": 27,
+        "maxHp": 27,
+        "isMonster": false
+      },
+      {
+        "name": "Fizzwizzle \"Fizz\" Tinkspark",
+        "initiative": 0,
+        "hp": 21,
+        "maxHp": 21,
+        "isMonster": false
+      },
+      {
+        "name": "Gemini",
+        "initiative": 0,
+        "hp": 21,
+        "maxHp": 21,
+        "isMonster": false
+      },
+      {
+        "name": "Thorin Thundershield",
+        "initiative": 0,
+        "hp": 28,
+        "maxHp": 28,
+        "isMonster": false
+      }
+    ],
+    "activeCombatantIndex": 0,
+    "combatRound": 2,
+    "rollHistory": [
+      {
+        "id": 1787447086514,
+        "roller": "Dice Tray",
+        "rollName": "1d10",
+        "total": 8,
+        "detail": "Rolled 1d10: 8",
+        "time": "08:04:46 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447086158,
+        "roller": "Dice Tray",
+        "rollName": "1d8",
+        "total": 6,
+        "detail": "Rolled 1d8: 6",
+        "time": "08:04:46 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447085828,
+        "roller": "Dice Tray",
+        "rollName": "1d6",
+        "total": 1,
+        "detail": "Rolled 1d6: 1",
+        "time": "08:04:45 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447085448,
+        "roller": "Dice Tray",
+        "rollName": "1d6",
+        "total": 5,
+        "detail": "Rolled 1d6: 5",
+        "time": "08:04:45 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447085063,
+        "roller": "Dice Tray",
+        "rollName": "1d4",
+        "total": 3,
+        "detail": "Rolled 1d4: 3",
+        "time": "08:04:45 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447084639,
+        "roller": "Dice Tray",
+        "rollName": "1d6",
+        "total": 3,
+        "detail": "Rolled 1d6: 3",
+        "time": "08:04:44 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447084276,
+        "roller": "Dice Tray",
+        "rollName": "1d4",
+        "total": 2,
+        "detail": "Rolled 1d4: 2",
+        "time": "08:04:44 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447083878,
+        "roller": "Dice Tray",
+        "rollName": "1d12",
+        "total": 11,
+        "detail": "Rolled 1d12: 11",
+        "time": "08:04:43 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447083385,
+        "roller": "Dice Tray",
+        "rollName": "1d4",
+        "total": 4,
+        "detail": "Rolled 1d4: 4",
+        "time": "08:04:43 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447082774,
+        "roller": "Dice Tray",
+        "rollName": "1d6",
+        "total": 1,
+        "detail": "Rolled 1d6: 1",
+        "time": "08:04:42 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447082141,
+        "roller": "Dice Tray",
+        "rollName": "1d8",
+        "total": 2,
+        "detail": "Rolled 1d8: 2",
+        "time": "08:04:42 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447081461,
+        "roller": "Dice Tray",
+        "rollName": "1d10",
+        "total": 8,
+        "detail": "Rolled 1d10: 8",
+        "time": "08:04:41 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447080548,
+        "roller": "Dice Tray",
+        "rollName": "1d100",
+        "total": 82,
+        "detail": "Rolled 1d100: 82",
+        "time": "08:04:40 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787447079406,
+        "roller": "Dice Tray",
+        "rollName": "1d20",
+        "total": 13,
+        "detail": "Rolled 1d20: 13",
+        "time": "08:04:39 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787428004448,
+        "roller": "Dice Tray",
+        "rollName": "1d8",
+        "total": 8,
+        "detail": "Rolled 1d8: 8",
+        "time": "02:46:44 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427994695,
+        "roller": "Dice Tray",
+        "rollName": "1d8",
+        "total": 2,
+        "detail": "Rolled 1d8: 2",
+        "time": "02:46:34 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427993002,
+        "roller": "Dice Tray",
+        "rollName": "1d4",
+        "total": 4,
+        "detail": "Rolled 1d4: 4",
+        "time": "02:46:33 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427991973,
+        "roller": "Dice Tray",
+        "rollName": "1d12",
+        "total": 5,
+        "detail": "Rolled 1d12: 5",
+        "time": "02:46:31 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427990810,
+        "roller": "Dice Tray",
+        "rollName": "1d20",
+        "total": 14,
+        "detail": "Rolled 1d20: 14",
+        "time": "02:46:30 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427988896,
+        "roller": "Dice Tray",
+        "rollName": "1d100",
+        "total": 60,
+        "detail": "Rolled 1d100: 60",
+        "time": "02:46:28 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427987764,
+        "roller": "Dice Tray",
+        "rollName": "1d20",
+        "total": 12,
+        "detail": "Rolled 1d20: 12",
+        "time": "02:46:27 PM",
+        "type": "normal"
+      },
+      {
+        "id": 1787427985754,
+        "roller": "Dice Tray",
+        "rollName": "1d20",
+        "total": 17,
+        "detail": "Rolled 1d20: 17",
+        "time": "02:46:25 PM",
+        "type": "normal"
+      }
+    ]
+  }
+}

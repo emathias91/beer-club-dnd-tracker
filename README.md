@@ -13,6 +13,7 @@ multiple campaigns, including homebrew.
 
 - [Features](#features)
 - [How it works](#how-it-works)
+- [Run anywhere (Docker — recommended)](#run-anywhere-docker--recommended)
 - [File map](#file-map)
 - [Installing on ZimaOS](#installing-on-zimaos)
 - [Everyday use](#everyday-use)
@@ -76,6 +77,57 @@ Browser (DM)      ─┘         (server.js, port 8080)    └─►  dm_notes.j
 
 No accounts, no cloud service, no external dependencies. The server uses only
 the Node standard library.
+
+---
+
+## Run anywhere (Docker — recommended)
+
+Same container image on **Linux, Windows, and macOS** (Docker Desktop or Engine).
+
+### Requirements
+- Docker + Docker Compose v2
+- Git
+
+### Start
+```bash
+git clone https://github.com/emathias91/beer-club-dnd-tracker.git
+cd beer-club-dnd-tracker
+mkdir -p maps
+docker compose up -d --build
+```
+
+Open **http://localhost:8080** (or set `HOST_PORT=8082` in the environment).
+
+### Maps (Option B + C)
+Copyrighted maps are **not** in git.
+
+1. **Drop files** into `./maps/` (e.g. `phandelver-map-exterior-player.webp`), **or**
+2. In the app, open **Campaign Map** → **Browse for map…** (uploads into durable data volume under `DATA_DIR/maps/`).
+
+A small placeholder SVG ships at `/maps/placeholder-map.svg` for smoke tests.
+
+### Data
+- Campaign board + games live in the Docker volume **`dnd-data`** (`DATA_DIR=/app/data`).
+- Survives rebuilds; wipe with `docker compose down -v` (destroys saves).
+
+### Native Node (any OS, no Docker)
+```bash
+# Linux / macOS
+export DATA_DIR="$(pwd)/data-local"
+export PORT=8080
+node server.js
+
+# Windows PowerShell
+$env:DATA_DIR = "$PWD\data-local"
+$env:PORT = "8080"
+node server.js
+```
+Put map files in `./maps/` or `data-local/maps/`, or upload in-app.
+
+### Health check
+```bash
+curl -s http://127.0.0.1:8080/api/health
+```
 
 ---
 

@@ -160,8 +160,24 @@
                 <div class="map-view-container">
                     <div class="map-wrapper" id="map-wrapper">
                         <div class="map-image-container" id="map-image-container">
-                            <img src="phandelver-map-exterior-player.webp" alt="Lost Mine of Phandelver Map" class="map-img" id="map-image">
+                            <img src="" alt="Campaign map" class="map-img" id="map-image">
                             
+                            <!-- Shown when map file is missing -->
+                            <div class="map-missing-overlay" id="map-missing-overlay" style="display:none;" aria-live="polite">
+                                <div class="map-missing-card">
+                                    <i class="fa-solid fa-map-location-dot"></i>
+                                    <h3>No campaign map loaded</h3>
+                                    <p>Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.</p>
+                                    <div class="map-missing-actions">
+                                        <button type="button" class="btn-dnd btn-dnd-primary" id="btn-browse-map">
+                                            <i class="fa-solid fa-folder-open"></i> Browse for map…
+                                        </button>
+                                        <input type="file" id="map-file-input" accept="image/webp,image/png,image/jpeg,image/gif,image/svg+xml,.webp,.png,.jpg,.jpeg,.gif,.svg" hidden>
+                                    </div>
+                                    <p class="map-missing-hint" id="map-missing-status"></p>
+                                </div>
+                            </div>
+
                             <!-- Dynamic markers will be rendered here -->
                             <div id="map-markers-layer"></div>
                             
@@ -176,6 +192,7 @@
                             <button class="map-ctrl-btn" id="map-zoom-in" title="Zoom In"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
                             <button class="map-ctrl-btn" id="map-zoom-out" title="Zoom Out"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
                             <button class="map-ctrl-btn" id="map-zoom-reset" title="Reset Zoom"><i class="fa-solid fa-rotate-left"></i></button>
+                            <button class="map-ctrl-btn" id="map-change-image" title="Change map image"><i class="fa-solid fa-image"></i></button>
                         </div>
                     </div>
                     

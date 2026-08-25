@@ -185,8 +185,9 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
-### 2026-08-23
+### 2026-08-23 (cont.) / portable run
 
+- **Run anywhere:** `PORT` from env; listen `0.0.0.0`; `/api/health`; maps under `DATA_DIR/maps` + `/maps/*`; upload API `POST /api/maps/upload`; missing-map overlay + **Browse for map**; Docker Compose data volume + optional `./maps` mount; `.dockerignore`; README Docker section; placeholder SVG.
 - **Game Board (F0b/F0c):** landing “Beer Club Game Board” with game dropdown; per-game **table PIN** (`/api/board/*`); campaign data under `DATA_DIR/games/<id>/` (LMoP migrated to `games/lmop`); Reset clears to **blank D&D** (not seed party). Seat select remains after unlock.
 - **F4 Safer Reset & Import:** Import preview modal + type `IMPORT`; Reset type `RESET`; Blob export; full `/api/state` replace; Import/Reset DM-seat only (partial F10).
 - **DM / Characters UX polish:** Lock/Unlock on Characters panel; Edit Specs gated on lock; status nowrap; vertical abilities; equipment scroll host.

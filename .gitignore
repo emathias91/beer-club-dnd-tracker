@@ -24,8 +24,15 @@ LOCAL_NOTES.*.md
 *.jpeg
 *.png
 !screenshots/*.png
+!maps/placeholder-map.svg
 *.pdf
 *.docx
+
+# ---- Portable maps dir (keep docs + placeholder only) ----
+maps/*
+!maps/README.md
+!maps/placeholder-map.svg
+!maps/.gitkeep
 
 # ---- Node / editor / OS noise ----
 node_modules/

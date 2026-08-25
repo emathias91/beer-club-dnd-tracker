@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1814"/>
+      <stop offset="100%" stop-color="#0e0c0a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#bg)"/>
+  <rect x="40" y="40" width="1520" height="920" fill="none" stroke="#c5a059" stroke-width="4" opacity="0.5"/>
+  <text x="800" y="460" text-anchor="middle" fill="#c5a059" font-family="Georgia, serif" font-size="48">Beer Club Campaign Map</text>
+  <text x="800" y="520" text-anchor="middle" fill="#9a8b6e" font-family="sans-serif" font-size="24">Placeholder — upload or drop a map file in /maps</text>
+  <circle cx="400" cy="700" r="8" fill="#c5a059" opacity="0.7"/>
+  <circle cx="900" cy="350" r="8" fill="#c5a059" opacity="0.7"/>
+  <circle cx="1200" cy="650" r="8" fill="#c5a059" opacity="0.7"/>
+  <path d="M400 700 Q700 400 900 350 T1200 650" fill="none" stroke="#c5a059" stroke-width="2" opacity="0.35" stroke-dasharray="8 8"/>
+</svg>

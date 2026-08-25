@@ -1096,9 +1096,98 @@ function initNavigation() {
 // ----------------------------------------------------
 // 1. Map Panel Controller & Drag-Drop Logic
 // ----------------------------------------------------
+
+/** Normalize campaign mapImage to a fetchable URL (maps volume preferred). */
+function resolveCampaignMapUrl(mapImage) {
+    const raw = String(mapImage || '').trim();
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+    if (raw.startsWith('/maps/')) return raw;
+    // bare filename → try portable maps path first
+    const base = raw.split(/[\\/]/).pop();
+    if (base && /\.(webp|png|jpe?g|gif|svg)$/i.test(base)) {
+        return '/maps/' + encodeURIComponent(base);
+    }
+    return raw;
+}
+
+function showMapMissing(show, message) {
+    const overlay = document.getElementById('map-missing-overlay');
+    const status = document.getElementById('map-missing-status');
+    const img = document.getElementById('map-image');
+    if (overlay) overlay.style.display = show ? 'flex' : 'none';
+    if (img) img.style.visibility = show ? 'hidden' : 'visible';
+    if (status && message != null) status.textContent = message;
+}
+
+function bindMapImageLifecycle(mapImg) {
+    if (!mapImg || mapImg.dataset.mapBound === '1') return;
+    mapImg.dataset.mapBound = '1';
+    mapImg.addEventListener('load', () => {
+        if (mapImg.naturalWidth > 0) showMapMissing(false, '');
+    });
+    mapImg.addEventListener('error', () => {
+        const active = getActiveCampaign();
+        const name = active && active.mapImage ? active.mapImage : '(none)';
+        showMapMissing(true, 'Could not load: ' + name);
+    });
+}
+
+async function uploadMapFile(file) {
+    if (!file) return null;
+    const status = document.getElementById('map-missing-status');
+    if (status) status.textContent = 'Uploading ' + file.name + '…';
+    const buf = await file.arrayBuffer();
+    // base64 without huge stack
+    let binary = '';
+    const bytes = new Uint8Array(buf);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    const dataBase64 = btoa(binary);
+    const res = await fetch('/api/maps/upload', {
+        method: 'POST',
+        headers: sessionHeaders(),
+        body: JSON.stringify({
+            filename: file.name,
+            dataBase64
+        })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(data.error || ('Upload failed (' + res.status + ')'));
+    }
+    return data;
+}
+
+async function applyUploadedMap(uploadResult) {
+    const active = getActiveCampaign();
+    if (!active || !uploadResult || !uploadResult.url) return;
+    active.mapImage = uploadResult.url;
+    // force full meta write
+    if (state.revisions) {
+        // leave revisions; saveState smart path handles meta
+    }
+    await saveStateToServer();
+    renderMapMarkers();
+    showMapMissing(false, '');
+    setSyncStatus('Map uploaded', 'ok');
+}
+
+function openMapFilePicker() {
+    const input = document.getElementById('map-file-input');
+    if (input) {
+        input.value = '';
+        input.click();
+    }
+}
+
 function initMapPanel() {
     const container = document.getElementById('map-image-container');
     const token = document.getElementById('party-token');
+    const mapImg = document.getElementById('map-image');
+    bindMapImageLifecycle(mapImg);
     
     // Zooming Controls
     document.getElementById('map-zoom-in').addEventListener('click', () => {
@@ -1113,6 +1202,26 @@ function initMapPanel() {
         state.zoomLevel = 1.0;
         applyZoom();
     });
+
+    const changeBtn = document.getElementById('map-change-image');
+    if (changeBtn) changeBtn.addEventListener('click', openMapFilePicker);
+    const browseBtn = document.getElementById('btn-browse-map');
+    if (browseBtn) browseBtn.addEventListener('click', openMapFilePicker);
+    const fileInput = document.getElementById('map-file-input');
+    if (fileInput) {
+        fileInput.addEventListener('change', async () => {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) return;
+            try {
+                const result = await uploadMapFile(file);
+                await applyUploadedMap(result);
+            } catch (e) {
+                console.error(e);
+                showMapMissing(true, e.message || 'Upload failed');
+                alert(e.message || 'Map upload failed');
+            }
+        });
+    }
     
     function applyZoom() {
         container.style.transform = `scale(${state.zoomLevel})`;
@@ -1127,8 +1236,8 @@ function initMapPanel() {
         addMarkerBtn.classList.add('btn-dnd-success');
     });
 
-    const mapImg = document.getElementById('map-image');
     mapImg.addEventListener('click', (e) => {
+        if (mapImg.style.visibility === 'hidden') return;
         const rect = mapImg.getBoundingClientRect();
         const scaleX = mapImg.naturalWidth / rect.width;
         const scaleY = mapImg.naturalHeight / rect.height;
@@ -1180,8 +1289,10 @@ function initMapPanel() {
         let newX = tokenX + dx;
         let newY = tokenY + dy;
         
-        newX = Math.max(0, Math.min(mapImg.naturalWidth, newX));
-        newY = Math.max(0, Math.min(mapImg.naturalHeight, newY));
+        const maxW = mapImg.naturalWidth || 2000;
+        const maxH = mapImg.naturalHeight || 2000;
+        newX = Math.max(0, Math.min(maxW, newX));
+        newY = Math.max(0, Math.min(maxH, newY));
         
         token.style.left = `${newX}px`;
         token.style.top = `${newY}px`;
@@ -1224,9 +1335,24 @@ function renderMapMarkers() {
     const layer = document.getElementById('map-markers-layer');
     layer.innerHTML = '';
     
-    // Set map image src
+    // Set map image src (portable /maps/… preferred)
     const mapImg = document.getElementById('map-image');
-    mapImg.src = active.mapImage || 'phandelver-map-exterior-player.webp';
+    bindMapImageLifecycle(mapImg);
+    const url = resolveCampaignMapUrl(active.mapImage);
+    if (!url) {
+        mapImg.removeAttribute('src');
+        showMapMissing(true, 'No map configured for this campaign.');
+    } else {
+        // Bust cache when switching maps
+        const bust = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(url);
+        if (mapImg.getAttribute('data-resolved') !== url) {
+            mapImg.setAttribute('data-resolved', url);
+            showMapMissing(false, 'Loading map…');
+            mapImg.src = bust;
+        } else if (mapImg.naturalWidth > 0) {
+            showMapMissing(false, '');
+        }
+    }
     
     // Render location markers
     active.mapMarkers.forEach(marker => {

@@ -5,9 +5,10 @@ const crypto = require('crypto');
 const store = require('./lib/store');
 const board = require('./lib/board');
 
-const PORT = 8080;
+const PORT = Number(process.env.PORT) || 8080;
 const ROOT = __dirname;
 const MAX_BACKUPS = 30;
+const MAX_MAP_BYTES = 25 * 1024 * 1024; // 25 MB
 
 const MIME_TYPES = {
     '.html': 'text/html',
@@ -16,6 +17,7 @@ const MIME_TYPES = {
     '.json': 'application/json',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
     '.gif': 'image/gif',
     '.webp': 'image/webp',
     '.pdf': 'application/pdf',
@@ -25,6 +27,42 @@ const MIME_TYPES = {
     '.woff2': 'font/woff2'
 };
 
+/** Maps live under DATA_DIR/maps (portable) with fallback to ROOT/maps. */
+function mapsDir() {
+    const primary = path.join(board.boardRoot(), 'maps');
+    try {
+        fs.mkdirSync(primary, { recursive: true });
+        return primary;
+    } catch (e) {
+        const fallback = path.join(ROOT, 'maps');
+        try { fs.mkdirSync(fallback, { recursive: true }); } catch (e2) { /* ignore */ }
+        return fallback;
+    }
+}
+
+function sanitizeMapFilename(name) {
+    const base = path.basename(String(name || 'map.webp')).replace(/[^a-zA-Z0-9._-]+/g, '_');
+    if (!base || base === '.' || base === '..') return 'map.webp';
+    const ext = path.extname(base).toLowerCase();
+    const allowed = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.svg'];
+    if (!allowed.includes(ext)) return base + '.webp';
+    return base;
+}
+
+function mapPublicUrl(filename) {
+    return '/maps/' + encodeURIComponent(path.basename(filename));
+}
+
+function resolveMapFile(urlPath) {
+    // /maps/foo.webp → mapsDir/foo.webp
+    if (!urlPath.startsWith('/maps/')) return null;
+    const raw = decodeURIComponent(urlPath.slice('/maps/'.length));
+    const safe = path.basename(raw);
+    if (!safe || safe === '.' || safe === '..') return null;
+    const full = path.join(mapsDir(), safe);
+    if (!full.startsWith(mapsDir() + path.sep) && full !== mapsDir()) return null;
+    return full;
+}
 function dbPath() {
     return store.monolithPath();
 }
@@ -209,6 +247,84 @@ const server = http.createServer(async (req, res) => {
             let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
             board.revokeAccessToken(gameAccessToken(req, p));
             return json(res, 200, { ok: true });
+        }
+
+        /* Health (no auth) — for Docker/Azure probes */
+        if (urlPath === '/api/health' && req.method === 'GET') {
+            return json(res, 200, {
+                ok: true,
+                port: PORT,
+                dataDir: board.boardRoot(),
+                mapsDir: mapsDir(),
+                node: process.version
+            });
+        }
+
+        /* Map file existence check (table token) */
+        if (urlPath === '/api/maps/check' && req.method === 'GET') {
+            const access = board.resolveAccessToken(gameAccessToken(req, null));
+            if (!access) {
+                return json(res, 401, { error: 'Game table locked', code: 'game_auth' });
+            }
+            const q = (req.url.split('?')[1] || '');
+            const params = new URLSearchParams(q);
+            const name = params.get('path') || params.get('name') || '';
+            const rel = String(name).replace(/^\/maps\//, '');
+            const full = path.join(mapsDir(), path.basename(rel));
+            const rootFallback = path.join(ROOT, path.basename(rel));
+            const exists = (fs.existsSync(full) && fs.statSync(full).isFile())
+                || (fs.existsSync(rootFallback) && fs.statSync(rootFallback).isFile());
+            return json(res, 200, {
+                exists,
+                path: exists ? mapPublicUrl(path.basename(rel)) : null,
+                mapsDir: mapsDir()
+            });
+        }
+
+        /* Upload map into DATA_DIR/maps (table token; DM preferred but any seat OK for PoC) */
+        if (urlPath === '/api/maps/upload' && req.method === 'POST') {
+            const access = board.resolveAccessToken(gameAccessToken(req, null));
+            if (!access) {
+                return json(res, 401, { error: 'Game table locked', code: 'game_auth' });
+            }
+            let body;
+            try {
+                body = await readBody(req, MAX_MAP_BYTES * 1.4);
+            } catch (e) {
+                return json(res, e.status || 413, { error: e.message || 'Upload too large' });
+            }
+            let parsed;
+            try {
+                parsed = JSON.parse(body || '{}');
+            } catch (e) {
+                return json(res, 400, { error: 'Expected JSON { filename, dataBase64 }' });
+            }
+            const filename = sanitizeMapFilename(parsed.filename || parsed.name || 'campaign-map.webp');
+            const b64 = String(parsed.dataBase64 || parsed.data || '').replace(/^data:[^;]+;base64,/, '');
+            if (!b64) return json(res, 400, { error: 'Missing dataBase64' });
+            let buf;
+            try {
+                buf = Buffer.from(b64, 'base64');
+            } catch (e) {
+                return json(res, 400, { error: 'Invalid base64' });
+            }
+            if (!buf.length) return json(res, 400, { error: 'Empty file' });
+            if (buf.length > MAX_MAP_BYTES) {
+                return json(res, 413, { error: 'Map too large (max 25 MB)' });
+            }
+            const dest = path.join(mapsDir(), filename);
+            try {
+                fs.writeFileSync(dest, buf);
+            } catch (e) {
+                console.error('map upload write failed', e);
+                return json(res, 500, { error: 'Failed to save map file' });
+            }
+            return json(res, 200, {
+                ok: true,
+                filename,
+                url: mapPublicUrl(filename),
+                bytes: buf.length
+            });
         }
 
         /* ---------- Table APIs require game unlock token ---------- */
@@ -549,6 +665,39 @@ async function serveStatic(req, res, urlPath) {
             return;
         }
 
+        // Portable maps: /maps/<file> from DATA_DIR/maps (then ROOT/maps)
+        if (decoded === '/maps' || decoded.startsWith('/maps/')) {
+            const mapFile = resolveMapFile(decoded === '/maps' ? '/maps/' : decoded);
+            if (!mapFile) {
+                res.writeHead(400, { 'Content-Type': 'text/plain' });
+                res.end('Bad map path');
+                return;
+            }
+            const tryPaths = [
+                mapFile,
+                path.join(ROOT, 'maps', path.basename(mapFile)),
+                path.join(ROOT, path.basename(mapFile)) // legacy host symlink / file at project root
+            ];
+            for (const p of tryPaths) {
+                try {
+                    if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+                        const ext = path.extname(p).toLowerCase();
+                        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+                        const content = fs.readFileSync(p);
+                        res.writeHead(200, {
+                            'Content-Type': contentType,
+                            'Cache-Control': 'public, max-age=3600'
+                        });
+                        res.end(content);
+                        return;
+                    }
+                } catch (e) { /* try next */ }
+            }
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Map not found. Place files in the maps volume or upload from the app.');
+            return;
+        }
+
         let filePath = path.resolve(ROOT, '.' + path.posix.normalize('/' + decoded));
         if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) {
             res.writeHead(403, { 'Content-Type': 'text/html' });
@@ -573,7 +722,7 @@ async function serveStatic(req, res, urlPath) {
             return;
         }
 
-        // Block data dir trees (legacy root or games/*)
+        // Block data dir trees (legacy root or games/*) but allow maps via /maps/ above
         const boardRoot = board.boardRoot();
         if (filePath === boardRoot || filePath.startsWith(boardRoot + path.sep)) {
             if (filePath.includes(path.sep + 'campaign' + path.sep)
@@ -594,6 +743,15 @@ async function serveStatic(req, res, urlPath) {
             }
         } catch (e) { /* fall through */ }
 
+        // If requesting a bare image name that lives only under maps/, redirect path
+        const extTry = path.extname(filePath).toLowerCase();
+        if (['.webp', '.png', '.jpg', '.jpeg', '.gif', '.svg'].includes(extTry) && !fs.existsSync(filePath)) {
+            const inMaps = path.join(mapsDir(), path.basename(filePath));
+            if (fs.existsSync(inMaps)) {
+                filePath = inMaps;
+            }
+        }
+
         const extname = String(path.extname(filePath)).toLowerCase();
         const contentType = MIME_TYPES[extname] || 'application/octet-stream';
 
@@ -613,11 +771,13 @@ async function serveStatic(req, res, urlPath) {
         });
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log('==================================================');
     console.log('Beer Club Game Board');
-    console.log(`Listening on port ${PORT}`);
+    console.log(`Listening on 0.0.0.0:${PORT}`);
     console.log(`Board data: ${board.boardRoot()}`);
+    console.log(`Maps dir:   ${mapsDir()}`);
+    console.log(`Node:       ${process.version}`);
     try {
         const b = board.listGamesPublic();
         console.log(`Games: ${b.games.map(g => g.id).join(', ') || '(none)'}`);

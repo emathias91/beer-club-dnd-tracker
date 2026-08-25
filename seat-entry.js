@@ -275,8 +275,21 @@
             if (img) {
                 if (data.mapImage) {
                     img.style.display = 'block';
-                    img.src = data.mapImage;
+                    const raw = String(data.mapImage);
+                    const src = raw.startsWith('/maps/') || /^https?:/i.test(raw)
+                        ? raw
+                        : (/\/|\.webp|\.png|\.jpe?g|\.gif|\.svg/i.test(raw)
+                            ? (raw.startsWith('/') ? raw : '/maps/' + encodeURIComponent(raw.split(/[\\/]/).pop()))
+                            : raw);
+                    img.src = src;
                     img.alt = title;
+                    img.onerror = function () {
+                        img.style.display = 'none';
+                        if (empty) empty.style.display = 'flex';
+                    };
+                    img.onload = function () {
+                        if (empty) empty.style.display = 'none';
+                    };
                     if (empty) empty.style.display = 'none';
                 } else {
                     img.style.display = 'none';

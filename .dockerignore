@@ -1,0 +1,42 @@
+# VCS / editor
+.git
+.gitignore
+.hermes
+.hermes-local
+.vscode
+.idea
+
+# Local data & secrets (never bake into image)
+data
+data-local
+data-local-pre-board-latest
+campaign_state.json
+campaign_state.json.tmp
+campaign_state.backup-*.json
+dm_notes.json
+*.local.md
+LOCAL_NOTES.md
+LOCAL_NOTES.*.md
+.env
+.env.*
+
+# Host-only map binaries (optional volume or in-app upload)
+*.webp
+*.jpg
+*.jpeg
+*.png
+*.pdf
+*.docx
+!maps/placeholder-map.svg
+!maps/README.md
+
+# Docs noise (optional keep README for humans outside image)
+node_modules
+npm-debug.log*
+*.md
+!maps/README.md
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.swp

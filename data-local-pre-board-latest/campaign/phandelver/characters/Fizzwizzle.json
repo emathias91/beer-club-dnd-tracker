@@ -1,0 +1,216 @@
+{
+  "revision": 27,
+  "updatedAt": "2026-08-23T14:36:34.467Z",
+  "claim": null,
+  "dmEditLock": null,
+  "pendingOffers": [],
+  "lastDmForce": {
+    "at": "2026-08-23T14:36:34.467Z",
+    "summary": [
+      "No visible field changes"
+    ],
+    "seenByHolder": false
+  },
+  "data": {
+    "name": "Fizzwizzle \"Fizz\" Tinkspark",
+    "player": "Zane",
+    "class": "Artificer",
+    "subclass": "Artillerist",
+    "level": 3,
+    "background": "Artisan",
+    "species": "Rock Gnome",
+    "xp": "",
+    "hp": {
+      "current": 21,
+      "max": 21,
+      "temp": 0
+    },
+    "ac": 14,
+    "initiative": "+2",
+    "speed": "30 ft",
+    "passivePerception": 12,
+    "proficiencyBonus": "+2",
+    "abilities": {
+      "STR": {
+        "score": 8,
+        "mod": "-1"
+      },
+      "DEX": {
+        "score": 14,
+        "mod": "+2"
+      },
+      "CON": {
+        "score": 12,
+        "mod": "+1"
+      },
+      "INT": {
+        "score": 17,
+        "mod": "+3"
+      },
+      "WIS": {
+        "score": 14,
+        "mod": "+2"
+      },
+      "CHA": {
+        "score": 10,
+        "mod": "+0"
+      }
+    },
+    "saves": {
+      "STR": "-1",
+      "DEX": "+2",
+      "CON": "+3",
+      "INT": "+5",
+      "WIS": "+2",
+      "CHA": "0"
+    },
+    "skills": {
+      "acrobatics": "+2",
+      "animalHandling": "+2",
+      "arcana": "+5",
+      "athletics": "-1",
+      "deception": "0",
+      "history": "+3",
+      "insight": "+2",
+      "intimidation": "0",
+      "investigation": "+5",
+      "medicine": "+4",
+      "nature": "+3",
+      "perception": "+2",
+      "performance": "0",
+      "persuasion": "+2",
+      "religion": "+3",
+      "sleightOfHand": "+2",
+      "stealth": "+2",
+      "survival": "+2"
+    },
+    "languages": "Common\r\nGnomish\r\nDwarvish",
+    "tools": "Tinker's Tools (DEX)              Thieves' Tools (DEX)\r\nSmith's Tools (STR)               Mason's Tools (STR)\r\nCarpenter's Tools (STR)        Leatherworker's Tools (DEX)\r\nWeaver's Tools (DEX)           Woodcarver's Tools (DEX)",
+    "equipment": "Studded Leather Armor\r\nDagger\r\nTinker's Tools\r\nThieves' Tools\r\nSmith's Tools\r\nMason's Tools\r\n2 Pouches\r\nTraveler's Clothes\r\nBackpack\r\nCaltrops\r\nCrowbar\r\n2 flasks Oil\r\nRations x \r\nRope\r\nTinderbox\r\n10 Torches\r\nWaterskin",
+    "features": {
+      "classFeatures": "Spellcasting: Can use Tools you have proficiency with as spellcasting focus, and you must have these tools in hand to cast any artificer spell.\r\nRegain all spell slots on long rest.\r\nCan change all prepared spells on long rest.\r\n\r\nReplicate Magic Item: When you finish a long rest, you can create one or two magic items from your list of known plans. If the item requires attunement, you can attune it to yourself the instant you create it. \r\nYou can have up to 2 magic items created at a time. If you create one above this limit, the oldest item vanishes. Items vanish 1d4 days after you die.\r\nYou can use and wand or weapon created by this featuer as a spellcasting focus in lieu of using a set of Artisan's Tools.\r\n\r\nTinker's Magic: 3 uses/long rest. As a magic action while holding Tinker's Tools, create one item from list within 5 ft. Item lasts until long rest. \r\nBall Bearings, Basket, Bedroll, Bell, Blanket, Block&Tackle, Bucket, Caltrops, Candle, Crowbar, Flask, Jug, Lamp, Net, Oil, Paper, Parchment, Pole, Pouch, Rope, Sack, Shovel, String, Tinderbox, Torch, Vial\r\nRemaining Uses: OOO\n\nEldritch Cannon: Using Smith's Tools or Woodcarver's Tools, you can use action to create small or tiny eldritch cannon in unoccupied space within 5 ft. You determine appearance, if you carry, or if it stands on wheels or legs if you don't carry it. It disappears after 1 hour. You can create once per long rest for free. After this you must expend a spell slot to create another. You can only have one cannon at a time.\r\nAC: 18; hp: 15; cast mending to heal it 2d6\r\nImmune to poison, psychic\r\nBonus action: perform one of the below actions and move cannon up to 15 ft. before or after the action:\r\n  Flamethrower: 15 ft. cone. DEX save. Take 2d8 fire damage on fail or half as much on success, flammable objects not carried ignite\r\n  Force Ballista: 120 ft range. Attack roll. 2d8 force damage, and push target 5 ft. \r\n  Protector: Grants each creature of your choice within 10 ft. 1d8 +3 temporary hp. \r\n  \r\n☐",
+      "speciesTraits": "Darkvision 60 ft\r\n\r\nGnomish Cunning: Advantage on INT,WIS,CHA saving throws\r\n\r\nGnomish Lineage: Know Mending & Prestidigitation. Can spend 10 minutes casting Prestidigitation to create Tiny clockwork device (AC 5,1hp). Device produces effect of Prestidigitation, creature can use bonus action to produce effect with device. Can make 3 devices at a time, they last 8 hours or if you dismantle. ",
+      "feats": " "
+    },
+    "spellcasting": {
+      "ability": "Intelligence",
+      "saveDC": 13,
+      "attackBonus": "+5",
+      "slots": {
+        "lvl1": {
+          "total": 3,
+          "expended": 0
+        },
+        "lvl2": {
+          "total": 0,
+          "expended": 0
+        },
+        "lvl3": {
+          "total": 0,
+          "expended": 0
+        }
+      }
+    },
+    "weapons": [
+      {
+        "name": "Dagger",
+        "bonus": "+4",
+        "damage": "1d4+2 piercing",
+        "notes": "Throw 20/60",
+        "ability": "DEX"
+      },
+      {
+        "name": "Eldritch Cannon: Force Ballista",
+        "bonus": "+5",
+        "damage": "2d8 force",
+        "notes": "120 ft, push 5 ft",
+        "ability": "INT"
+      },
+      {
+        "name": "Eldritch Cannon: Flamethrower",
+        "bonus": "DC 13",
+        "damage": "2d8 fire",
+        "notes": "15 ft cone, DEX save for half",
+        "ability": "INT"
+      }
+    ],
+    "spells": [
+      {
+        "level": 0,
+        "name": "Alchemy Jug"
+      },
+      {
+        "name": "Bag of Holding",
+        "level": 0
+      },
+      {
+        "name": "Clockwork Amulet",
+        "level": 0
+      },
+      {
+        "level": 0,
+        "name": "Mending",
+        "notes": "Fix nonmagical object",
+        "castingTime": "1 minute",
+        "range": "Touch"
+      },
+      {
+        "range": "10 ft",
+        "castingTime": "Action",
+        "name": "Prestidigitation",
+        "notes": "Sensory,Fire,Clean,Sensation,Mark,Creation",
+        "level": 0
+      },
+      {
+        "level": 0,
+        "name": "Wand of the War Mage +1"
+      },
+      {
+        "range": "Self",
+        "castingTime": "Reaction",
+        "name": "Shield",
+        "level": 1,
+        "notes": "+5 AC until start of next turn"
+      },
+      {
+        "range": "self:15 ft. cube",
+        "castingTime": "Action",
+        "level": 1,
+        "name": "Thunderwave"
+      }
+    ],
+    "backstory": "Fizzwizzle Tinkspark was born in the spark-scorched warrens of Gearwhistle Hollow, a Rock Gnome enclave deep beneath the Ironspine Mountains. From the moment he could walk, he was a tiny whirlwind of gears, sparks, and questionable decisions. While other gnome children played quietly, Fizz was rewiring the family lamps into singing, dancing contraptions that usually ended up on fire. His parents and six older siblings learned early to hide anything flammable and never leave him unsupervised with tools.His genius (or madness) truly revealed itself on his 42nd birthday when he unveiled the Auto-Digging Mole-Drill Mark I. It worked brilliantly for eleven glorious seconds — then drilled straight through a support pillar, caused a small cave-in, and launched the town’s prize mushroom garden into the ceiling. After the dust settled and the elders finished yelling, his family suggested the wider world might have more space for his particular brand of enthusiasm.With a backpack full of half-finished gadgets and his mother’s “please don’t explode anyone important” warning, Fizz left home and became a traveling merchant of wonders. He wanders the Sword Coast, selling enchanted tools, clockwork toys, self-stirring pots, and “mostly reliable” mining equipment. He’s repaired broken carts, enchanted pickaxes to glow in the dark, and turned ordinary lanterns into floating singing lights for many clients — including the ambitious dwarf miner Gundren Rockseeker.Gundren had used Fizz’s services several times before and was impressed by both his skill and his wild creativity. So when Gundren prepared a major new expedition to reclaim the lost mine of Wave Echo Cave near Phandalin, he sought Fizz out in Neverwinter. “Ten gold pieces and all the scrap you can carry,” the dwarf growled, sliding the coins across the table. Fizz’s eyes lit up like Fire Bolts. He enthusiastically agreed to join the expedition as the official tinkerer and artificer.Gundren and his bodyguard Sildar Hallwinter rode ahead to “take care of business,” while Fizz traveled with the supply wagon along the Triboar Trail. That’s when everything went wonderfully wrong. The party discovered two dead horses lying in the road — Gundren’s and Sildar’s — riddled with goblin arrows. Before they could even clear the path, Cragmaw goblins ambushed them from the trees.In the chaos of battle, instead of taking the safer route to town, the group boldly tracked the fleeing goblins straight back through the wilderness to their lair deep inside Cragmaw Hideout. What followed was a chaotic, explosive rescue mission. Fizz’s gadgets, Fire Bolts, Grease traps, and hasty inventions helped turn the tide as they fought through goblin ambushes. In the end, they successfully rescued Sildar Hallwinter from captivity. The expedition may have started with dead horses and goblin trouble, but it ended in roaring victory.Now, with the Sildar Hallwinter rescued, the grand mining expedition can’t continue until he finds Gundren Rockseeker.  With new scars, and a head full of fresh ideas from the lost mine, Fizzwizzle “Fizz” Tinkspark is more excited than ever. The world is full of things that need improving with a little spark and a lot of enthusiasm — and he’s just getting started!Personality Notes (perfect for your sheet or quick roleplay reminders)Alignment: Chaotic Good — rules are for people who haven’t invented better ones yet.Ideal: “Everything can be improved with a little spark and a lot of enthusiasm!”Bond: “My family back in Gearwhistle Hollow will one day hear legends of the greatest tinkerer the Sword Coast has ever seen.”Flaw: “If I haven’t tested it with the words ‘hold my ale,’ it’s clearly not finished yet.”",
+    "saveProfs": [
+      "CON",
+      "INT"
+    ],
+    "skillProfs": {
+      "arcana": "prof",
+      "investigation": "prof",
+      "medicine": "prof",
+      "persuasion": "prof"
+    },
+    "skillMisc": {},
+    "resources": [
+      {
+        "name": "Tinker's Magic",
+        "current": 3,
+        "max": 3,
+        "reset": "long"
+      },
+      {
+        "name": "Eldritch Cannon (free)",
+        "current": 1,
+        "max": 1,
+        "reset": "long"
+      }
+    ],
+    "coins": {
+      "pp": 0,
+      "gp": 0,
+      "ep": 0,
+      "sp": 0,
+      "cp": 0
+    }
+  }
+}

@@ -1,11 +1,18 @@
 {
-  "name": "dnd-campaign-dashboard",
-  "version": "1.0.0",
-  "description": "Interactive D&D Campaign Dashboard and Character Tracker",
+  "name": "beer-club-dnd-tracker",
+  "version": "1.1.0",
+  "description": "Self-hosted Beer Club D&D campaign tracker (Game Board, seats, sheets)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "start:local": "DATA_DIR=./data-local node server.js",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f dnd-tracker"
   },
-  "author": "Antigravity Pair Programming",
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Beer Club",
   "license": "ISC"
 }

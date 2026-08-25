@@ -1,15 +1,37 @@
+# Beer Club D&D Tracker — portable run (Linux / Windows / macOS via Docker)
+#
+#   docker compose up -d --build
+#   open http://localhost:8080
+#
+# LOCAL DEV (this machine): bind-mounts ./data-local so your campaign is used.
+# PORTABLE / FRESH HOST: switch the data volume line to the named volume below.
+#
+# Maps: ./maps is mounted read-only; uploads also go to DATA_DIR/maps.
+
 services:
   dnd-tracker:
     build: .
-    container_name: dnd-campaign-tracker
+    image: beer-club-dnd-tracker:local
+    container_name: beer-club-dnd-tracker
     restart: unless-stopped
     ports:
-      - "8082:8080"
+      - "${HOST_PORT:-8080}:8080"
     environment:
-      - DATA_DIR=/app/data
+      PORT: "8080"
+      DATA_DIR: /app/data
     volumes:
-      # Bind mounts, matching how the container is actually running today.
-      # ./data keeps campaign_state.json and its backups visible in the
-      # ZimaOS Files app, instead of hidden inside a Docker named volume.
-      - .:/app
-      - ./data:/app/data
+      # --- Local Jarvis campaign data (has LMoP characters) ---
+      - ./data-local:/app/data
+      # --- Portable alternative (empty until you seed it): ---
+      # - dnd-data:/app/data
+      # Optional host map files (read-only). Create the folder first.
+      - ./maps:/app/maps:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# volumes:
+#   dnd-data:
