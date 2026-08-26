@@ -409,17 +409,18 @@ async function loadState() {
                         rollHistory: state.rollHistory
                     }));
                 } catch (e) {}
-                if (state.campaigns.length === 0) {
-                    await resetToDefaults({ persist: false });
-                    await saveStateToServer();
-                }
+                // Blank tables (campaigns: []) are a valid first-run state — do not
+                // self-heal by POSTing defaults. resetToDefaults() is also empty now,
+                // so heal + saveStateToServer() → loadState() would loop forever and
+                // never finish boot (dead UI, backup rotation wiped in <1s).
                 if (!state.activeCampaignId && state.campaigns[0]) {
                     state.activeCampaignId = state.campaigns[0].id;
                 }
                 setSyncStatus('Live', 'ok');
                 return;
             } else if (response.status === 404) {
-                console.log('No state found on server. Initializing defaults.');
+                // Only true "nothing initialized" case — seed blank template once.
+                console.log('No state found on server. Initializing blank table.');
                 await resetToDefaults({ persist: false });
                 await saveStateToServer();
                 return;
@@ -1314,12 +1315,17 @@ function initMapPanel() {
     // Update party log button
     document.getElementById('btn-update-party-loc').addEventListener('click', () => {
         const active = getActiveCampaign();
-        document.getElementById('party-location-input').value = active.partyPosition.lastUpdated;
+        if (!active || !active.partyPosition) {
+            alert('Create a campaign first.');
+            return;
+        }
+        document.getElementById('party-location-input').value = active.partyPosition.lastUpdated || '';
         document.getElementById('modal-party-location').style.display = 'flex';
     });
     
     document.getElementById('btn-save-party-location').addEventListener('click', () => {
         const active = getActiveCampaign();
+        if (!active || !active.partyPosition) return;
         const val = document.getElementById('party-location-input').value.trim();
         active.partyPosition.lastUpdated = val || "Active travel";
         saveState();
@@ -1330,7 +1336,22 @@ function initMapPanel() {
 
 function renderMapMarkers() {
     const active = getActiveCampaign();
-    if (!active) return;
+    updateEmptyCampaignChrome();
+    if (!active) {
+        const layer = document.getElementById('map-markers-layer');
+        if (layer) layer.innerHTML = '';
+        const mapImg = document.getElementById('map-image');
+        if (mapImg) {
+            mapImg.removeAttribute('src');
+            mapImg.removeAttribute('data-resolved');
+        }
+        const token = document.getElementById('party-token');
+        if (token) {
+            token.style.left = '100px';
+            token.style.top = '100px';
+        }
+        return;
+    }
     
     const layer = document.getElementById('map-markers-layer');
     layer.innerHTML = '';
@@ -1355,7 +1376,7 @@ function renderMapMarkers() {
     }
     
     // Render location markers
-    active.mapMarkers.forEach(marker => {
+    (active.mapMarkers || []).forEach(marker => {
         const pin = document.createElement('div');
         pin.className = `map-marker ${marker.type || 'town'}`;
         pin.style.left = `${marker.x}px`;
@@ -1373,8 +1394,9 @@ function renderMapMarkers() {
     
     // Render party token position
     const token = document.getElementById('party-token');
-    token.style.left = `${active.partyPosition.x}px`;
-    token.style.top = `${active.partyPosition.y}px`;
+    const pos = active.partyPosition || { x: 100, y: 100 };
+    token.style.left = `${pos.x}px`;
+    token.style.top = `${pos.y}px`;
     
     // Set map transform scale
     document.getElementById('map-image-container').style.transform = `scale(${state.zoomLevel})`;
@@ -2843,7 +2865,7 @@ function dmShow(which) {
 async function dmApi(action, payload) {
     const res = await fetch(`/api/dm-notes/${action}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: sessionHeaders(),
         body: JSON.stringify(payload || {})
     });
     let data = {};
@@ -2853,7 +2875,22 @@ async function dmApi(action, payload) {
 
 async function refreshDmGate() {
     try {
-        const res = await fetch('/api/dm-notes/status', { cache: 'no-store' });
+        const res = await fetch('/api/dm-notes/status', {
+            cache: 'no-store',
+            headers: sessionHeaders()
+        });
+        if (res.status === 401) {
+            dmShow('dm-locked');
+            const err = document.getElementById('dm-error');
+            if (err) err.innerText = 'Table locked — unlock the game board first.';
+            return;
+        }
+        if (!res.ok) {
+            dmShow('dm-locked');
+            const err = document.getElementById('dm-error');
+            if (err) err.innerText = 'Could not load DM notes status.';
+            return;
+        }
         const { configured } = await res.json();
         dmShow(configured ? 'dm-locked' : 'dm-setup');
     } catch (e) {
@@ -4184,14 +4221,9 @@ function initCampaignSettings() {
         }
     });
     
-    // Open Settings Modal
+    // Open Settings Modal (safe with zero campaigns)
     document.getElementById('btn-campaign-settings').addEventListener('click', () => {
-        const active = getActiveCampaign();
-        document.getElementById('campaign-edit-id').value = active.id;
-        document.getElementById('campaign-name-input').value = active.name;
-        document.getElementById('campaign-map-input').value = active.mapImage;
-        mapFileInput.value = ''; // Reset file upload
-        document.getElementById('modal-campaign-settings').style.display = 'flex';
+        openCampaignSettingsModal();
     });
     
     // Save settings
@@ -4200,6 +4232,10 @@ function initCampaignSettings() {
         const name = document.getElementById('campaign-name-input').value.trim();
         const mapImage = document.getElementById('campaign-map-input').value.trim();
         
+        if (!id) {
+            alert('No campaign selected. Create a campaign first.');
+            return;
+        }
         if (!name) {
             alert('Please enter a campaign name.');
             return;
@@ -4208,7 +4244,7 @@ function initCampaignSettings() {
         const campaign = state.campaigns.find(c => c.id === id);
         if (campaign) {
             campaign.name = name;
-            campaign.mapImage = mapImage || 'phandelver-map-exterior-player.webp';
+            campaign.mapImage = mapImage || '';
             saveState();
             renderCampaignSelector();
             renderAll();
@@ -4216,42 +4252,26 @@ function initCampaignSettings() {
         }
     });
     
-    // Create new campaign (blank slate)
-    document.getElementById('btn-create-campaign-new').addEventListener('click', () => {
-        const name = prompt("Enter a name for your new Campaign:");
+    // Create new campaign (blank slate) — modal + empty-state buttons
+    const onCreate = async () => {
+        const name = prompt('Enter a name for your new Campaign:');
         if (!name) return;
-        
-        const newId = 'campaign-' + Date.now();
-        const newCampaign = {
-            id: newId,
-            name: name,
-            mapImage: 'phandelver-map-exterior-player.webp',
-            characters: {
-                'char1': { name: 'New Character', class: 'Fighter', level: 1, abilities: { STR: { score: 10, mod: '+0' }, DEX: { score: 10, mod: '+0' }, CON: { score: 10, mod: '+0' }, INT: { score: 10, mod: '+0' }, WIS: { score: 10, mod: '+0' }, CHA: { score: 10, mod: '+0' } }, saves: { STR: '+0', DEX: '+0', CON: '+0', INT: '+0', WIS: '+0', CHA: '+0' }, skills: {}, weapons: [], spells: [], equipment: '', backstory: '', hp: { current: 10, max: 10, temp: 0 }, ac: 10, speed: '30 ft', initiative: '+0', passivePerception: 10, proficiencyBonus: '+2' }
-            },
-            sessionLogs: [],
-            mapMarkers: [],
-            partyPosition: { x: 100, y: 100, lastUpdated: "Campaign Started" }
-        };
-        
-        state.campaigns.push(newCampaign);
-        state.activeCampaignId = newId;
-        state.activeCharacterId = 'char1';
-        state.combatants = initDefaultCombatants(newCampaign.characters);
-        state.activeCombatantIndex = 0;
-        state.combatRound = 1;
-        
-        saveState();
-        renderCampaignSelector();
-        renderAll();
-        document.getElementById('modal-campaign-settings').style.display = 'none';
-        
-        logRoll('System', 'New Campaign', '-', `Created blank campaign: ${name}`);
-    });
+        const ok = await createBlankCampaign(name);
+        if (ok) {
+            document.getElementById('modal-campaign-settings').style.display = 'none';
+        }
+    };
+    document.getElementById('btn-create-campaign-new').addEventListener('click', onCreate);
+    const emptyCreateBtn = document.getElementById('btn-create-campaign-empty');
+    if (emptyCreateBtn) emptyCreateBtn.addEventListener('click', onCreate);
     
     // Clone campaign (keeps characters & markers, resets logs)
-    document.getElementById('btn-clone-campaign-new').addEventListener('click', () => {
+    document.getElementById('btn-clone-campaign-new').addEventListener('click', async () => {
         const active = getActiveCampaign();
+        if (!active) {
+            alert('No campaign to clone. Create a campaign first.');
+            return;
+        }
         const name = prompt(`Enter name for the cloned campaign:`, `${active.name} (Cloned)`);
         if (!name) return;
         
@@ -4275,7 +4295,11 @@ function initCampaignSettings() {
         state.activeCombatantIndex = 0;
         state.combatRound = 1;
         
-        saveState();
+        if (IS_SERVER_MODE) {
+            await saveStateToServer();
+        } else {
+            saveState();
+        }
         renderCampaignSelector();
         renderAll();
         document.getElementById('modal-campaign-settings').style.display = 'none';
@@ -4286,6 +4310,10 @@ function initCampaignSettings() {
     // Delete campaign
     document.getElementById('btn-delete-campaign-active').addEventListener('click', () => {
         const active = getActiveCampaign();
+        if (!active) {
+            alert('No campaign to delete.');
+            return;
+        }
         if (state.campaigns.length <= 1) {
             alert('Cannot delete the last remaining campaign. Create a new campaign first!');
             return;
@@ -4310,10 +4338,184 @@ function initCampaignSettings() {
     });
 }
 
+/** Starter character blob for a brand-new blank campaign. */
+function buildStarterCharacter() {
+    return {
+        name: 'New Character',
+        class: 'Fighter',
+        level: 1,
+        abilities: {
+            STR: { score: 10, mod: '+0' },
+            DEX: { score: 10, mod: '+0' },
+            CON: { score: 10, mod: '+0' },
+            INT: { score: 10, mod: '+0' },
+            WIS: { score: 10, mod: '+0' },
+            CHA: { score: 10, mod: '+0' }
+        },
+        saves: { STR: '+0', DEX: '+0', CON: '+0', INT: '+0', WIS: '+0', CHA: '+0' },
+        skills: {},
+        weapons: [],
+        spells: [],
+        equipment: '',
+        backstory: '',
+        hp: { current: 10, max: 10, temp: 0 },
+        ac: 10,
+        speed: '30 ft',
+        initiative: '+0',
+        passivePerception: 10,
+        proficiencyBonus: '+2'
+    };
+}
+
+function buildBlankCampaign(name) {
+    const newId = 'campaign-' + Date.now();
+    return {
+        id: newId,
+        name: String(name).trim(),
+        mapImage: '',
+        characters: { char1: buildStarterCharacter() },
+        sessionLogs: [],
+        mapMarkers: [],
+        partyPosition: { x: 100, y: 100, lastUpdated: 'Campaign started' }
+    };
+}
+
+/**
+ * Create a blank campaign on an empty (or existing) table and persist fully.
+ * Returns true if created.
+ */
+async function createBlankCampaign(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return false;
+
+    const newCampaign = buildBlankCampaign(trimmed);
+    state.campaigns.push(newCampaign);
+    state.activeCampaignId = newCampaign.id;
+    state.activeCharacterId = 'char1';
+    state.combatants = initDefaultCombatants(newCampaign.characters);
+    state.activeCombatantIndex = 0;
+    state.combatRound = 1;
+
+    // Full state write so split layout + revisions exist for the new campaign id
+    if (IS_SERVER_MODE) {
+        const ok = await saveStateToServer();
+        if (!ok) {
+            // Roll back local if server rejected
+            state.campaigns = state.campaigns.filter(c => c.id !== newCampaign.id);
+            state.activeCampaignId = state.campaigns[0] ? state.campaigns[0].id : '';
+            alert('Could not save the new campaign to the server.');
+            return false;
+        }
+    } else {
+        saveState();
+    }
+
+    renderCampaignSelector();
+    renderAll();
+    logRoll('System', 'New Campaign', '-', `Created blank campaign: ${trimmed}`);
+    return true;
+}
+
+function openCampaignSettingsModal() {
+    const active = getActiveCampaign();
+    const editId = document.getElementById('campaign-edit-id');
+    const nameInput = document.getElementById('campaign-name-input');
+    const mapInput = document.getElementById('campaign-map-input');
+    const mapFileInput = document.getElementById('campaign-map-file');
+    const saveBtn = document.getElementById('btn-save-campaign-settings');
+    const cloneBtn = document.getElementById('btn-clone-campaign-new');
+    const deleteBtn = document.getElementById('btn-delete-campaign-active');
+    const titleEl = document.querySelector('#modal-campaign-settings .modal-header h3');
+
+    if (mapFileInput) mapFileInput.value = '';
+
+    if (!active) {
+        if (editId) editId.value = '';
+        if (nameInput) {
+            nameInput.value = '';
+            nameInput.placeholder = 'Create a campaign first (button below)';
+            nameInput.disabled = true;
+        }
+        if (mapInput) {
+            mapInput.value = '';
+            mapInput.disabled = true;
+        }
+        if (saveBtn) saveBtn.disabled = true;
+        if (cloneBtn) cloneBtn.disabled = true;
+        if (deleteBtn) deleteBtn.disabled = true;
+        if (titleEl) titleEl.textContent = 'Campaign Settings — empty table';
+    } else {
+        if (editId) editId.value = active.id;
+        if (nameInput) {
+            nameInput.disabled = false;
+            nameInput.placeholder = 'e.g., Curse of Strahd, My Homebrew';
+            nameInput.value = active.name || '';
+        }
+        if (mapInput) {
+            mapInput.disabled = false;
+            mapInput.value = active.mapImage || '';
+        }
+        if (saveBtn) saveBtn.disabled = false;
+        if (cloneBtn) cloneBtn.disabled = false;
+        if (deleteBtn) deleteBtn.disabled = false;
+        if (titleEl) titleEl.textContent = 'Campaign Settings';
+    }
+
+    document.getElementById('modal-campaign-settings').style.display = 'flex';
+}
+
+/** Map heading, party note, and empty-table overlay. */
+function updateEmptyCampaignChrome() {
+    const empty = !state.campaigns || state.campaigns.length === 0;
+    const active = getActiveCampaign();
+    const overlay = document.getElementById('empty-campaigns-overlay');
+    const heading = document.getElementById('map-panel-heading');
+    const sub = document.getElementById('map-panel-sub');
+    const partyDesc = document.getElementById('party-loc-desc');
+    const addMarker = document.getElementById('btn-add-marker-modal');
+    const select = document.getElementById('campaign-select');
+
+    if (overlay) overlay.style.display = empty ? 'flex' : 'none';
+    if (empty) {
+        // Hide map-missing while empty-table card is up
+        const missing = document.getElementById('map-missing-overlay');
+        if (missing) missing.style.display = 'none';
+        if (heading) heading.textContent = 'Campaign Map';
+        if (sub) sub.textContent = 'No campaign on this table yet.';
+        if (partyDesc) partyDesc.textContent = '—';
+        if (addMarker) addMarker.disabled = true;
+        if (select) {
+            select.innerHTML = '';
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '(no campaigns)';
+            select.appendChild(opt);
+            select.disabled = true;
+        }
+        return;
+    }
+
+    if (select) select.disabled = false;
+    if (addMarker) addMarker.disabled = false;
+    if (heading) heading.textContent = (active && active.name) ? active.name : 'Campaign Map';
+    if (sub) {
+        sub.textContent = "Track the party's journey and pin notable locations. Drag the Shield token to move the party.";
+    }
+    if (partyDesc) {
+        const note = active && active.partyPosition && active.partyPosition.lastUpdated;
+        partyDesc.textContent = note || '—';
+    }
+}
+
 function renderCampaignSelector() {
     const select = document.getElementById('campaign-select');
     if (!select) return;
     select.innerHTML = '';
+
+    if (!state.campaigns || state.campaigns.length === 0) {
+        updateEmptyCampaignChrome();
+        return;
+    }
     
     state.campaigns.forEach(c => {
         const opt = document.createElement('option');
@@ -4322,10 +4524,12 @@ function renderCampaignSelector() {
         opt.selected = c.id === state.activeCampaignId;
         select.appendChild(opt);
     });
+    select.disabled = false;
     
     select.onchange = (e) => {
         state.activeCampaignId = e.target.value;
         const newCampaign = getActiveCampaign();
+        if (!newCampaign) return;
         
         const charKeys = Object.keys(newCampaign.characters);
         state.activeCharacterId = charKeys.length > 0 ? charKeys[0] : '';
@@ -4337,6 +4541,8 @@ function renderCampaignSelector() {
         renderAll();
         showMarkerDetails(null);
     };
+
+    updateEmptyCampaignChrome();
 }
 
 // ----------------------------------------------------
@@ -4704,6 +4910,7 @@ function migrateAllCharacters() {
 
 function renderAll() {
     migrateAllCharacters();
+    updateEmptyCampaignChrome();
     renderMapMarkers();
     renderCharacterTabs();
     renderSelectedCharacter();

@@ -147,8 +147,8 @@
             <section id="panel-map" class="panel active">
                 <div class="panel-header">
                     <div class="panel-title">
-                        <h2>Sword Coast Map</h2>
-                        <p>Track the party's journey and pin notable locations. Drag the Shield token to move the party.</p>
+                        <h2 id="map-panel-heading">Campaign Map</h2>
+                        <p id="map-panel-sub">Track the party's journey and pin notable locations. Drag the Shield token to move the party.</p>
                     </div>
                     <div class="panel-actions">
                         <button class="btn-dnd btn-dnd-primary" id="btn-add-marker-modal">
@@ -162,6 +162,20 @@
                         <div class="map-image-container" id="map-image-container">
                             <img src="" alt="Campaign map" class="map-img" id="map-image">
                             
+                            <!-- Shown when the table has zero campaigns (first-run blank table) -->
+                            <div class="map-missing-overlay" id="empty-campaigns-overlay" style="display:none;" aria-live="polite">
+                                <div class="map-missing-card">
+                                    <i class="fa-solid fa-folder-plus"></i>
+                                    <h3>No campaign yet</h3>
+                                    <p>This table is blank. Create a campaign to start tracking characters and maps, or use <strong>Import Campaign</strong> if you have a JSON backup.</p>
+                                    <div class="map-missing-actions">
+                                        <button type="button" class="btn-dnd btn-dnd-primary" id="btn-create-campaign-empty">
+                                            <i class="fa-solid fa-folder-plus"></i> Create Campaign
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Shown when map file is missing -->
                             <div class="map-missing-overlay" id="map-missing-overlay" style="display:none;" aria-live="polite">
                                 <div class="map-missing-card">
@@ -219,7 +233,7 @@
                         <div class="dnd-card" style="max-height: 200px; display: flex; flex-direction: column;">
                             <div class="dnd-card-title">Party Position</div>
                             <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between;">
-                                <p id="party-loc-desc" style="font-size: 0.9rem; color: var(--text-muted); font-style: italic;">Phandalin</p>
+                                <p id="party-loc-desc" style="font-size: 0.9rem; color: var(--text-muted); font-style: italic;">—</p>
                                 <button class="btn-dnd" id="btn-update-party-loc" style="width: 100%; margin-top: 10px;">
                                     <i class="fa-solid fa-pen-to-square"></i> Update Log Note
                                 </button>

@@ -128,8 +128,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 13. **Mobile / small screens** — **Open**  
     Some breakpoints exist; map + dense sheets remain awkward on phones. Tablets matter more than phones for this POC.
 
-14. **Seed vs empty start** — **Open**  
-    Defaults are Beer Club / Phandelver-oriented. Fine for this table; a blank campaign path helps testing without stomping mental models.
+14. **Seed vs empty start** — **Addressed (2026-08-25/26)**  
+    Empty table heal loop fixed; **Create Campaign** on map empty state + Campaign Settings guarded when no active campaign; blank create uses full `POST /api/state`.
 
 ### P3 — maintainability (POC health)
 
@@ -184,6 +184,18 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-08-26 / first-run empty table (P1)
+
+- **Create Campaign:** map panel empty-state card + `createBlankCampaign()` full save; Campaign Settings opens safely with zero campaigns (clone/delete/save disabled until one exists).
+- **DM Notes:** `/api/dm-notes/*` client calls now send `sessionHeaders()` (`X-Game-Token`) so status/setup/unlock stop 401ing after table unlock.
+- **Placeholder bleed:** map heading defaults to “Campaign Map”; party position shows “—” until a campaign exists (no hardcoded Sword Coast / Phandalin).
+
+### 2026-08-25 / empty-table boot loop (P0)
+
+- **Bug (fresh install only):** after F0c blank template, `loadState()` treated `campaigns: []` as “needs heal,” called `resetToDefaults()` (still empty) + `saveStateToServer()` → trailing `loadState()` → infinite snapshot/state ping-pong (~25 req/s). Boot never finished wiring handlers → dead UI; backup rotation filled with identical empty posts in &lt;1s.
+- **Fix:** accept empty campaigns on OK snapshot as valid; only seed blank on true **404**. Lives that already have party data (e.g. LMoP) were unaffected.
+- **Follow-ups (2026-08-26):** Create Campaign empty-state path + DM Notes game token (see next History entry).
 
 ### 2026-08-23 (cont.) / portable run
 
