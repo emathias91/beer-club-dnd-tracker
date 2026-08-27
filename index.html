@@ -25,6 +25,7 @@
             </label>
             <p id="board-game-meta" class="board-game-meta"></p>
 
+            <!-- Unlock existing game -->
             <div id="board-pin-block" class="board-pin-block" style="display:none;">
                 <label class="entry-label" id="board-pin-label" for="board-game-pin">Game PIN
                     <input type="password" id="board-game-pin" placeholder="Table PIN" autocomplete="current-password">
@@ -32,6 +33,49 @@
                 <p id="board-pin-hint" class="entry-hint"></p>
                 <button type="button" class="btn-dnd btn-dnd-primary" id="board-unlock-btn" style="width:100%;margin-top:10px;">
                     <i class="fa-solid fa-door-open"></i> Enter table
+                </button>
+            </div>
+
+            <!-- Create brand-new game (own table PIN + DM PIN) -->
+            <div id="board-new-game-block" class="board-pin-block" style="display:none;">
+                <label class="entry-label" for="board-new-game-name">Game name
+                    <input type="text" id="board-new-game-name" placeholder="e.g. Lost Mine of Phandelver" autocomplete="off" maxlength="80">
+                </label>
+                <label class="entry-label" for="board-new-game-pin">Create table PIN
+                    <input type="password" id="board-new-game-pin" placeholder="Players use this (4+ chars)" autocomplete="new-password">
+                </label>
+                <label class="entry-label" for="board-new-game-pin2">Confirm table PIN
+                    <input type="password" id="board-new-game-pin2" placeholder="Re-enter table PIN" autocomplete="new-password">
+                </label>
+                <label class="entry-label" for="board-new-dm-pin">Create DM PIN
+                    <input type="password" id="board-new-dm-pin" placeholder="DM only (4+ chars)" autocomplete="new-password">
+                </label>
+                <label class="entry-label" for="board-new-dm-pin2">Confirm DM PIN
+                    <input type="password" id="board-new-dm-pin2" placeholder="Re-enter DM PIN" autocomplete="new-password">
+                </label>
+                <p class="entry-hint">Table PIN opens the game for everyone. DM PIN is separate (must differ) and is required to sit as DM.</p>
+                <button type="button" class="btn-dnd btn-dnd-primary" id="board-create-game-btn" style="width:100%;margin-top:10px;">
+                    <i class="fa-solid fa-plus"></i> Create game &amp; enter
+                </button>
+            </div>
+
+            <!-- Import game from JSON package -->
+            <div id="board-import-game-block" class="board-pin-block" style="display:none;">
+                <label class="entry-label" for="board-import-file">Import file
+                    <input type="file" id="board-import-file" accept=".json,application/json">
+                </label>
+                <p id="board-import-file-meta" class="entry-hint"></p>
+                <div id="board-import-pin-fields">
+                    <label class="entry-label" for="board-import-table-pin">Table PIN (if not in file)
+                        <input type="password" id="board-import-table-pin" placeholder="Players use this" autocomplete="new-password">
+                    </label>
+                    <label class="entry-label" for="board-import-dm-pin">DM PIN (if not in file)
+                        <input type="password" id="board-import-dm-pin" placeholder="DM only" autocomplete="new-password">
+                    </label>
+                    <p class="entry-hint">Newer exports restore table + DM PINs from the file automatically. Older campaign-only exports need both PINs here.</p>
+                </div>
+                <button type="button" class="btn-dnd btn-dnd-primary" id="board-import-game-btn" style="width:100%;margin-top:10px;" disabled>
+                    <i class="fa-solid fa-file-import"></i> Import game &amp; enter
                 </button>
             </div>
             <p id="board-status" class="entry-status"></p>
@@ -50,12 +94,12 @@
             <div id="entry-character-list" class="entry-character-list"></div>
             <div class="entry-dm-block">
                 <h2><i class="fa-solid fa-dungeon"></i> Dungeon Master</h2>
-                <p class="entry-hint">DM Notes PIN (separate from the game table PIN). Optional until configured.</p>
+                <p class="entry-hint">DM Notes PIN (separate from the game table PIN). Required to enter as DM.</p>
                 <label class="entry-label">Device label
                     <input type="text" id="entry-dm-label" placeholder="DM laptop" value="DM">
                 </label>
-                <label class="entry-label">DM Notes PIN
-                    <input type="password" id="entry-dm-pin" placeholder="PIN" autocomplete="current-password">
+                <label class="entry-label">DM PIN
+                    <input type="password" id="entry-dm-pin" placeholder="DM PIN" autocomplete="current-password">
                 </label>
                 <button type="button" class="btn-dnd btn-dnd-primary" id="entry-dm-submit">
                     <i class="fa-solid fa-key"></i> Enter as DM
@@ -126,16 +170,17 @@
             </nav>
             
             <div class="sidebar-footer">
-                <button class="btn-dnd" id="btn-export-data" title="Download shared campaign state as JSON (Blob download)">
-                    <i class="fa-solid fa-download"></i> Export Campaign
+                <button class="btn-dnd" id="btn-export-data" title="Download full game package (campaign + table/DM PIN material)">
+                    <i class="fa-solid fa-download"></i> Export Game
                 </button>
-                <button class="btn-dnd" id="btn-import-trigger" title="Preview then replace live state from a JSON file">
+                <button class="btn-dnd" id="btn-import-trigger" title="Replace live campaign data inside this game (DM)">
                     <i class="fa-solid fa-upload"></i> Import Campaign
                 </button>
                 <input type="file" id="file-import" style="display: none;" accept=".json,application/json">
-                <button class="btn-dnd" id="btn-reset-data" style="color: var(--accent-red); border-color: rgba(166,38,38,0.4);" title="Reset all campaigns to seed template (requires confirmation)">
-                    <i class="fa-solid fa-trash-can"></i> Reset Board
+                <button class="btn-dnd" id="btn-reset-data" style="color: var(--accent-red); border-color: rgba(166,38,38,0.4);" title="Permanently delete this game from the board (DM)">
+                    <i class="fa-solid fa-trash-can"></i> Delete Game
                 </button>
+                <p id="export-stale-banner" class="admin-tools-hint" style="display:none;"></p>
                 <p id="admin-tools-hint" class="admin-tools-hint" style="display:none;"></p>
             </div>
         </aside>
@@ -1124,32 +1169,33 @@ e.g.
         </div>
     </div>
 
-    <!-- Reset board confirm (F4) -->
+    <!-- Delete game confirm -->
     <div class="modal-overlay" id="modal-reset-confirm">
         <div class="modal-card">
             <div class="modal-header">
-                <h3 style="color: var(--accent-red);"><i class="fa-solid fa-trash-can"></i> Reset board</h3>
+                <h3 style="color: var(--accent-red);"><i class="fa-solid fa-trash-can"></i> Delete game</h3>
                 <button type="button" class="map-ctrl-btn close-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body">
                 <p class="modal-warn">
-                    This clears the <strong>table to a blank D&amp;D template</strong>
-                    (no characters, map, logs, or combat). Export a backup first if you need the current game.
+                    This <strong>permanently deletes this game</strong> from the Game Board
+                    (campaigns, characters, maps, logs, table PIN, and DM notes for this table only).
+                    Export a backup first if you might need it again.
                 </p>
                 <ul class="reset-checklist">
-                    <li>All campaigns and characters removed</li>
-                    <li>Map markers, session logs, combat, rolls cleared</li>
-                    <li>You can Import a saved JSON or rebuild from Campaign Settings later</li>
+                    <li>Removed from the board dropdown</li>
+                    <li>All campaigns and characters for this game deleted</li>
+                    <li>You return to the Game Board afterward</li>
                 </ul>
                 <div class="form-group">
-                    <label for="reset-confirm-input">Type <code>RESET</code> to enable</label>
-                    <input type="text" id="reset-confirm-input" autocomplete="off" spellcheck="false" placeholder="RESET">
+                    <label for="reset-confirm-input">Type <code>DELETE</code> to enable</label>
+                    <input type="text" id="reset-confirm-input" autocomplete="off" spellcheck="false" placeholder="DELETE">
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn-dnd close-modal">Cancel</button>
                 <button type="button" class="btn-dnd btn-dnd-danger" id="btn-reset-apply" disabled>
-                    <i class="fa-solid fa-trash-can"></i> Reset to blank
+                    <i class="fa-solid fa-trash-can"></i> Delete game
                 </button>
             </div>
         </div>

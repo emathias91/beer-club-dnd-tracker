@@ -242,6 +242,60 @@ const server = http.createServer(async (req, res) => {
             const result = board.setupGamePin(p.gameId, p.pin, ip);
             return json(res, result.status, result);
         }
+        if (urlPath === '/api/board/create-game' && req.method === 'POST') {
+            const ip = req.socket.remoteAddress || 'unknown';
+            const raw = await readBody(req, 1e5);
+            let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            const result = board.createGame({
+                name: p.name,
+                pin: p.pin,
+                pinConfirm: p.pinConfirm,
+                dmPin: p.dmPin,
+                dmPinConfirm: p.dmPinConfirm,
+                system: p.system,
+                systemLabel: p.systemLabel,
+                template: p.template
+            }, ip);
+            return json(res, result.status, result);
+        }
+        if (urlPath === '/api/board/import-game' && req.method === 'POST') {
+            const ip = req.socket.remoteAddress || 'unknown';
+            let body;
+            try {
+                body = await readBody(req, 25 * 1024 * 1024);
+            } catch (e) {
+                return json(res, e.status || 500, { error: e.message });
+            }
+            let p;
+            try { p = JSON.parse(body || '{}'); } catch (e) {
+                return json(res, 400, { error: 'Invalid JSON' });
+            }
+            const result = board.importGame(p, ip);
+            if (result.status !== 200) {
+                return json(res, result.status, result);
+            }
+            // Write imported campaign payload under the new game root
+            try {
+                await store.runWithDataRoot(board.gameRoot(result.gameId), async () => {
+                    store.migrateIfNeeded();
+                    store.writeSplitFromState(result.importedState);
+                });
+            } catch (e) {
+                console.error('import-game state write failed', e);
+                board.deleteGame(result.gameId);
+                return json(res, 500, { error: 'Imported pins but failed to write campaign data: ' + e.message });
+            }
+            return json(res, 200, {
+                status: 200,
+                gameAccessToken: result.gameAccessToken,
+                gameId: result.gameId,
+                gameName: result.gameName,
+                system: result.system,
+                systemLabel: result.systemLabel,
+                expiresAt: result.expiresAt,
+                pinsRestored: result.pinsRestored
+            });
+        }
         if (urlPath === '/api/board/leave' && req.method === 'POST') {
             const raw = await readBody(req, 1e5);
             let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
@@ -381,13 +435,19 @@ async function handleTableApi(req, res, urlPath, access) {
             const dm = readDm();
             const configured = !!(dm && dm.pinHash);
             if (!configured) {
-                // Allow DM seat without PIN if never configured (first run)
-                const result = store.claimDmSeat({ label: p.label || 'DM' });
-                return json(res, 200, result);
+                // Do not open DM seat with any/empty PIN. New games set DM PIN at create;
+                // legacy tables must configure DM Notes PIN first.
+                return json(res, 428, {
+                    error: 'DM PIN is not set for this game. Create the game with a DM PIN, or set one under DM Notes first.',
+                    needsDmPinSetup: true
+                });
+            }
+            if (!p.pin || String(p.pin).length < 4) {
+                return json(res, 400, { error: 'Enter the DM PIN.' });
             }
             if (!pinValid(p.pin)) {
                 noteFailure(ip);
-                return json(res, 401, { error: 'Incorrect PIN.' });
+                return json(res, 401, { error: 'Incorrect DM PIN.' });
             }
             clearFailures(ip);
             const result = store.claimDmSeat({ label: p.label || 'DM' });
@@ -408,6 +468,64 @@ async function handleTableApi(req, res, urlPath, access) {
             const token = sessionToken(req, p);
             store.releaseSession(token);
             return json(res, 200, { ok: true });
+        }
+
+        /* ---------- Full game export package (includes PIN hashes) ---------- */
+        if (urlPath === '/api/export-package' && req.method === 'GET') {
+            store.migrateIfNeeded();
+            const snap = store.buildSnapshot();
+            if (!snap) return json(res, 404, { error: 'No state initialized' });
+            const meta = board.getGameMeta(access.gameId) || {};
+            const tableAccess = board.readAccessRecord(access.gameId);
+            const dm = board.readDmRecord(access.gameId);
+            const exportedAt = board.markGameExported(access.gameId);
+            const pkg = {
+                schemaHint: 'beer-club-dnd-game-v2',
+                exportedAt,
+                gameName: meta.name || access.gameId,
+                system: meta.system || 'dnd5e',
+                systemLabel: meta.systemLabel || 'D&D',
+                template: meta.template || 'dnd5e',
+                tableAccess: tableAccess && tableAccess.pinHash ? {
+                    pinHash: tableAccess.pinHash,
+                    salt: tableAccess.salt,
+                    createdAt: tableAccess.createdAt || null
+                } : null,
+                dmAccess: dm && dm.pinHash ? {
+                    pinHash: dm.pinHash,
+                    salt: dm.salt,
+                    notes: dm.notes || '',
+                    updated: dm.updated || null,
+                    createdAt: dm.createdAt || null
+                } : null,
+                campaigns: snap.campaigns,
+                activeCampaignId: snap.activeCampaignId,
+                combatants: snap.combatants,
+                activeCombatantIndex: snap.activeCombatantIndex,
+                combatRound: snap.combatRound,
+                rollHistory: snap.rollHistory
+            };
+            return json(res, 200, pkg);
+        }
+
+        if (urlPath === '/api/export-status' && req.method === 'GET') {
+            const st = board.getExportStatus(access.gameId);
+            return json(res, st.status, st);
+        }
+
+        if (urlPath === '/api/game/delete' && req.method === 'POST') {
+            const raw = await readBody(req, 1e5);
+            let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            const seatTok = sessionToken(req, p);
+            const sess = store.getSession(seatTok);
+            if (!sess || sess.role !== 'dm') {
+                return json(res, 403, { error: 'Delete Game requires a DM seat.' });
+            }
+            const result = board.deleteGame(access.gameId);
+            if (result.status === 200) {
+                board.revokeAccessToken(gameAccessToken(req, p));
+            }
+            return json(res, result.status, result);
         }
 
         /* ---------- Snapshot ---------- */

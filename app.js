@@ -4579,23 +4579,57 @@ function updateAdminToolsChrome() {
     if (importBtn) {
         importBtn.disabled = !allowed;
         importBtn.title = allowed
-            ? 'Preview then replace live state from a JSON file'
+            ? 'Replace live campaign data inside this game from JSON (DM)'
             : 'DM seat required to import campaign data';
     }
     if (resetBtn) {
         resetBtn.disabled = !allowed;
         resetBtn.title = allowed
-            ? 'Reset table to blank D&D template (requires typing RESET)'
-            : 'DM seat required to reset the board';
+            ? 'Permanently delete this game from the board (type DELETE)'
+            : 'DM seat required to delete the game';
     }
     if (hint) {
         if (!allowed) {
             hint.style.display = 'block';
-            hint.textContent = 'Import / Reset: DM seat only. Export is always available.';
+            hint.textContent = 'Import Campaign / Delete Game: DM seat only. Export is always available.';
         } else {
             hint.style.display = 'none';
             hint.textContent = '';
         }
+    }
+    refreshExportStaleBanner();
+}
+
+async function refreshExportStaleBanner() {
+    const el = document.getElementById('export-stale-banner');
+    if (!el || !IS_SERVER_MODE) return;
+    try {
+        const res = await fetch('/api/export-status', {
+            cache: 'no-store',
+            headers: sessionHeaders()
+        });
+        if (!res.ok) {
+            el.style.display = 'none';
+            return;
+        }
+        const data = await res.json();
+        if (data.stale) {
+            el.style.display = 'block';
+            if (!data.lastExportedAt) {
+                el.textContent = 'No full game export yet. Export Game so table + DM PINs are backed up.';
+            } else {
+                const mins = Math.floor((data.ageMs || 0) / 60000);
+                const ago = mins >= 60
+                    ? (Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm ago')
+                    : (mins + ' min ago');
+                el.textContent = 'Last game export was ' + ago + '. Export again if you made important changes.';
+            }
+        } else {
+            el.style.display = 'none';
+            el.textContent = '';
+        }
+    } catch (e) {
+        el.style.display = 'none';
     }
 }
 
@@ -4745,17 +4779,37 @@ async function applyFullStateReplace(payload, logLabel) {
 function initImportExport() {
     updateAdminToolsChrome();
 
-    document.getElementById('btn-export-data').addEventListener('click', () => {
+    document.getElementById('btn-export-data').addEventListener('click', async () => {
         try {
-            const payload = buildSharedExportPayload();
-            const name = `dnd_campaign_export_${new Date().toISOString().split('T')[0]}.json`;
+            setSyncStatus('Exporting…', 'warn');
+            let payload;
+            if (IS_SERVER_MODE) {
+                const res = await fetch('/api/export-package', {
+                    cache: 'no-store',
+                    headers: sessionHeaders()
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || ('Export failed (' + res.status + ')'));
+                }
+                payload = await res.json();
+            } else {
+                payload = buildSharedExportPayload();
+                payload.schemaHint = 'beer-club-dnd-game-v2';
+            }
+            const safeName = String(payload.gameName || 'campaign')
+                .replace(/[^a-zA-Z0-9._-]+/g, '_')
+                .slice(0, 40);
+            const name = `dnd_game_export_${safeName}_${new Date().toISOString().split('T')[0]}.json`;
             const size = downloadJsonBlob(payload, name);
             setSyncStatus('Exported ' + (size < 1024 ? size + ' B' : (size / 1024).toFixed(1) + ' KB'), 'ok');
             if (typeof logRoll === 'function') {
-                logRoll('System', 'Data Export', '-', 'Database exported to JSON (Blob).');
+                logRoll('System', 'Data Export', '-', 'Full game package exported (campaign + PIN material).');
             }
+            refreshExportStaleBanner();
         } catch (e) {
             console.error(e);
+            setSyncStatus('Export failed', 'err');
             alert('Export failed: ' + (e.message || e));
         }
     });
@@ -4857,7 +4911,7 @@ function initImportExport() {
 
     document.getElementById('btn-reset-data').addEventListener('click', () => {
         if (!canUseDestructiveAdmin()) {
-            alert('Reset requires a DM seat.');
+            alert('Delete Game requires a DM seat.');
             return;
         }
         if (resetConfirm) {
@@ -4870,31 +4924,48 @@ function initImportExport() {
 
     if (resetConfirm && resetApply) {
         resetConfirm.addEventListener('input', () => {
-            resetApply.disabled = resetConfirm.value.trim().toUpperCase() !== 'RESET';
+            resetApply.disabled = resetConfirm.value.trim().toUpperCase() !== 'DELETE';
         });
         resetApply.addEventListener('click', async () => {
             if (!canUseDestructiveAdmin()) {
-                alert('Reset requires a DM seat.');
+                alert('Delete Game requires a DM seat.');
                 return;
             }
-            if (resetConfirm.value.trim().toUpperCase() !== 'RESET') return;
+            if (resetConfirm.value.trim().toUpperCase() !== 'DELETE') return;
             resetApply.disabled = true;
-            const ok = await resetToDefaults();
-            renderCampaignSelector();
-            renderAll();
-            updateCharSheetChrome();
-            updateAdminToolsChrome();
-            if (resetModal) resetModal.style.display = 'none';
-            resetConfirm.value = '';
-            if (ok) {
-                if (typeof logRoll === 'function') {
-                    logRoll('System', 'Data Reset', '-', 'Board reset to blank D&D template.');
+            try {
+                const res = await fetch('/api/game/delete', {
+                    method: 'POST',
+                    headers: sessionHeaders(),
+                    body: '{}'
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    alert(data.error || 'Could not delete game.');
+                    resetApply.disabled = false;
+                    return;
                 }
-                alert('Table reset to blank D&D template.');
-            } else {
-                alert('Reset applied locally but server save failed. Check sync status.');
+                if (resetModal) resetModal.style.display = 'none';
+                resetConfirm.value = '';
+                // Leave table fully and return to board
+                if (typeof window.leaveGameAndReturn === 'function') {
+                    await window.leaveGameAndReturn();
+                } else {
+                    if (window.SeatSession) SeatSession.clear();
+                    if (window.GameAccess) GameAccess.clear();
+                    location.reload();
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Network error deleting game.');
+                resetApply.disabled = false;
             }
         });
+    }
+
+    // Refresh export age banner periodically while app is open
+    if (IS_SERVER_MODE) {
+        setInterval(() => { refreshExportStaleBanner(); }, 5 * 60 * 1000);
     }
 }
 

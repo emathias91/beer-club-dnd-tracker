@@ -1,9 +1,17 @@
 # ---- Live campaign data (do not publish) ----
 data/
 data-local/
+data-local-*/
+data-local-pre-board*/
 campaign_state.json
 campaign_state.json.tmp
 campaign_state.backup-*.json
+campaign_state.pre-split-backup-*.json
+access.json
+sessions.json
+manifest.json
+# per-game roots sometimes dropped at repo root by mistake
+games/
 
 # ---- Secrets ----
 dm_notes.json

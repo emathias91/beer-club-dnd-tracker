@@ -185,6 +185,26 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-08-26 / Import Game · Delete Game · export reminder
+
+- **Board:** dropdown adds **Import Game** (file picker). Restores `tableAccess` + `dmAccess` PIN hashes from v2 packages; older campaign-only JSON asks for table + DM PIN at import.
+- **Export Game** (in-app): `GET /api/export-package` includes campaigns + table/DM PIN material (`schemaHint: beer-club-dnd-game-v2`) and stamps `lastExportedAt`.
+- **Delete Game** replaces Reset Board (DM, type `DELETE`) → removes board entry + `games/<id>/`, returns to Game Board.
+- Sidebar banner if no export yet or last export older than **1 hour**.
+
+### 2026-08-26 / New Game on empty board
+
+- Empty Game Board dropdown: **Select Game** + **New Game** only (no pre-seeded LMoP stub).
+- **New Game** → name + table PIN (confirm) + **DM PIN (confirm)** → `POST /api/board/create-game` writes fresh `access.json` + `dm_notes.json`. DM PIN must differ from table PIN.
+- **Enter as DM** requires the DM PIN — no longer allows empty/any PIN when DM notes were unconfigured (`/api/seats/dm` → 428/401).
+- Default `board.json` / `defaultBoard()` starts with `games: []`.
+
+### 2026-08-26 / blank playground in Projects
+
+- **Projects tree is the blank build/test target:** live LMoP `data-local` moved out of the repo to OneDrive `Documents/D&D/beer-club-live-backups/` (plus existing export JSONs there). Compose still mounts `./data-local` — it starts empty (`campaignCount: 0`, needs table PIN setup).
+- **Removed tracked** `data-local-pre-board-latest/**` party files from the git index; tightened `.gitignore` for `data-local-*`, pre-board dirs, and stray game roots. History on remote may still contain old blobs until a separate history cleanup (not done here).
+- **Real-data test pattern:** copy/clone project to a temp folder → run compose → Import export JSON (or restore a full `data-local-*` backup into that temp only). Do not put party data back into Projects if the goal is never shipping table data.
+
 ### 2026-08-26 / first-run empty table (P1)
 
 - **Create Campaign:** map panel empty-state card + `createBlankCampaign()` full save; Campaign Settings opens safely with zero campaigns (clone/delete/save disabled until one exists).

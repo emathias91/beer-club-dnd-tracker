@@ -9,11 +9,14 @@
 # Local data & secrets (never bake into image)
 data
 data-local
-data-local-pre-board-latest
+data-local-*
+data-local-pre-board*
 campaign_state.json
 campaign_state.json.tmp
 campaign_state.backup-*.json
 dm_notes.json
+access.json
+sessions.json
 *.local.md
 LOCAL_NOTES.md
 LOCAL_NOTES.*.md

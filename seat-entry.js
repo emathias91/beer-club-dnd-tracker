@@ -114,135 +114,399 @@
     }
 
     let boardGames = [];
-    let selectedGame = null;
-    let setupMode = false;
+        let selectedGame = null;
+        let setupMode = false;
+        const NEW_GAME_VALUE = '__new__';
+        const IMPORT_GAME_VALUE = '__import__';
+        let _boardImportParsed = null;
 
-    async function loadBoard() {
-        const status = $('board-status');
-        const sel = $('board-game-select');
-        try {
-            const res = await fetch('/api/board', { cache: 'no-store' });
-            const data = await res.json();
-            boardGames = data.games || [];
-            if (sel) {
-                sel.innerHTML = '';
-                if (!boardGames.length) {
-                    sel.innerHTML = '<option value="">No games configured</option>';
-                } else {
+        async function loadBoard() {
+            const status = $('board-status');
+            const sel = $('board-game-select');
+            try {
+                const res = await fetch('/api/board', { cache: 'no-store' });
+                const data = await res.json();
+                boardGames = data.games || [];
+                if (sel) {
+                    sel.innerHTML = '';
                     const ph = document.createElement('option');
                     ph.value = '';
-                    ph.textContent = '— Select a game —';
+                    ph.textContent = 'Select Game';
                     sel.appendChild(ph);
+
                     boardGames.forEach(g => {
                         const opt = document.createElement('option');
                         opt.value = g.id;
                         opt.textContent = g.label || (g.name + ' (' + (g.systemLabel || 'D&D') + ')');
                         sel.appendChild(opt);
                     });
+
+                    const ng = document.createElement('option');
+                    ng.value = NEW_GAME_VALUE;
+                    ng.textContent = 'New Game';
+                    sel.appendChild(ng);
+
+                    const ig = document.createElement('option');
+                    ig.value = IMPORT_GAME_VALUE;
+                    ig.textContent = 'Import Game';
+                    sel.appendChild(ig);
+                }
+                if (status) status.textContent = '';
+                onGameSelectChange();
+            } catch (e) {
+                if (status) status.textContent = 'Could not load Game Board.';
+                console.error(e);
+            }
+        }
+
+        function hideBoardForms() {
+            const pinBlock = $('board-pin-block');
+            const newBlock = $('board-new-game-block');
+            const importBlock = $('board-import-game-block');
+            if (pinBlock) pinBlock.style.display = 'none';
+            if (newBlock) newBlock.style.display = 'none';
+            if (importBlock) importBlock.style.display = 'none';
+        }
+
+        function onGameSelectChange() {
+            const sel = $('board-game-select');
+            const id = sel && sel.value;
+            const meta = $('board-game-meta');
+            const pinBlock = $('board-pin-block');
+            const newBlock = $('board-new-game-block');
+            const pinHint = $('board-pin-hint');
+            const pinLabel = $('board-pin-label');
+            const btn = $('board-unlock-btn');
+            const pinInput = $('board-game-pin');
+            const status = $('board-status');
+            if (status) status.textContent = '';
+
+            selectedGame = null;
+            setupMode = false;
+
+            if (!id) {
+                hideBoardForms();
+                if (meta) meta.textContent = boardGames.length
+                    ? ''
+                    : 'No games on this board yet. Choose New Game to create one.';
+                return;
+            }
+
+            if (id === NEW_GAME_VALUE) {
+                hideBoardForms();
+                if (meta) {
+                    meta.textContent = 'Create a new table with its own table PIN and DM PIN (they must differ).';
+                }
+                if (newBlock) newBlock.style.display = 'block';
+                ['board-new-game-name', 'board-new-game-pin', 'board-new-game-pin2',
+                    'board-new-dm-pin', 'board-new-dm-pin2'].forEach(fid => {
+                    const el = $(fid);
+                    if (el) el.value = '';
+                });
+                const nameEl = $('board-new-game-name');
+                if (nameEl) setTimeout(() => nameEl.focus(), 30);
+                return;
+            }
+
+            if (id === IMPORT_GAME_VALUE) {
+                hideBoardForms();
+                _boardImportParsed = null;
+                if (meta) {
+                    meta.textContent = 'Import a saved game JSON. PINs in the file are restored when present.';
+                }
+                const importBlock = $('board-import-game-block');
+                if (importBlock) importBlock.style.display = 'block';
+                const fileEl = $('board-import-file');
+                if (fileEl) fileEl.value = '';
+                const fileMeta = $('board-import-file-meta');
+                if (fileMeta) fileMeta.textContent = 'Choose a .json export file.';
+                ['board-import-table-pin', 'board-import-dm-pin'].forEach(fid => {
+                    const el = $(fid);
+                    if (el) el.value = '';
+                });
+                const btn = $('board-import-game-btn');
+                if (btn) btn.disabled = true;
+                updateBoardImportPinVisibility();
+                return;
+            }
+
+            selectedGame = boardGames.find(g => g.id === id) || null;
+            if (!selectedGame) {
+                hideBoardForms();
+                if (meta) meta.textContent = '';
+                return;
+            }
+
+            if (newBlock) newBlock.style.display = 'none';
+            if (meta) {
+                meta.textContent =
+                    (selectedGame.systemLabel || 'D&D') +
+                    (selectedGame.campaignCount
+                        ? ' · ' + selectedGame.campaignCount + ' campaign(s) on disk'
+                        : ' · blank / empty table') +
+                    (selectedGame.needsPinSetup ? ' · first-time PIN setup' : '');
+            }
+
+            setupMode = !!selectedGame.needsPinSetup;
+            if (pinBlock) pinBlock.style.display = 'block';
+            if (pinInput) pinInput.value = '';
+            if (pinHint) {
+                pinHint.textContent = setupMode
+                    ? 'No table PIN yet. Choose a PIN (4+ chars) that players will use to open this game tonight.'
+                    : 'Enter the shared table PIN for this game (not the DM Notes PIN).';
+            }
+            if (pinLabel && pinLabel.childNodes[0]) {
+                pinLabel.childNodes[0].textContent = setupMode ? 'Create game PIN ' : 'Game PIN ';
+            }
+            if (btn) {
+                btn.innerHTML = setupMode
+                    ? '<i class="fa-solid fa-shield-halved"></i> Set PIN & enter table'
+                    : '<i class="fa-solid fa-door-open"></i> Enter table';
+            }
+        }
+
+        async function unlockOrSetup() {
+            const status = $('board-status');
+            if (!selectedGame) {
+                if (status) status.textContent = 'Select a game first.';
+                return;
+            }
+            const pin = ($('board-game-pin') && $('board-game-pin').value) || '';
+            if (pin.length < 4) {
+                if (status) status.textContent = 'PIN must be at least 4 characters.';
+                return;
+            }
+            if (status) status.textContent = 'Checking…';
+            try {
+                const path = setupMode || selectedGame.needsPinSetup
+                    ? '/api/board/setup-pin'
+                    : '/api/board/unlock';
+                const res = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gameId: selectedGame.id, pin })
+                });
+                const data = await res.json();
+                if (res.status === 428 || data.needsPinSetup) {
+                    setupMode = true;
+                    selectedGame.needsPinSetup = true;
+                    onGameSelectChange();
+                    if (status) status.textContent = data.error || 'Set a table PIN first.';
+                    return;
+                }
+                if (!res.ok) {
+                    if (status) status.textContent = data.error || 'Unlock failed';
+                    return;
+                }
+                GameAccess.set({
+                    gameAccessToken: data.gameAccessToken,
+                    gameId: data.gameId,
+                    gameName: data.gameName,
+                    systemLabel: data.systemLabel,
+                    expiresAt: data.expiresAt
+                });
+                if (status) status.textContent = '';
+                showEntry();
+                await loadEntry();
+            } catch (e) {
+                if (status) status.textContent = 'Network error';
+                console.error(e);
+            }
+        }
+
+        async function createNewGame() {
+            const status = $('board-status');
+            const name = ($('board-new-game-name') && $('board-new-game-name').value || '').trim();
+            const pin = ($('board-new-game-pin') && $('board-new-game-pin').value) || '';
+            const pin2 = ($('board-new-game-pin2') && $('board-new-game-pin2').value) || '';
+            const dmPin = ($('board-new-dm-pin') && $('board-new-dm-pin').value) || '';
+            const dmPin2 = ($('board-new-dm-pin2') && $('board-new-dm-pin2').value) || '';
+            if (!name) {
+                if (status) status.textContent = 'Enter a name for the new game.';
+                return;
+            }
+            if (pin.length < 4) {
+                if (status) status.textContent = 'Table PIN must be at least 4 characters.';
+                return;
+            }
+            if (pin !== pin2) {
+                if (status) status.textContent = 'The two table PINs do not match.';
+                return;
+            }
+            if (dmPin.length < 4) {
+                if (status) status.textContent = 'DM PIN must be at least 4 characters.';
+                return;
+            }
+            if (dmPin !== dmPin2) {
+                if (status) status.textContent = 'The two DM PINs do not match.';
+                return;
+            }
+            if (dmPin === pin) {
+                if (status) status.textContent = 'DM PIN must be different from the table PIN.';
+                return;
+            }
+            if (status) status.textContent = 'Creating game…';
+            try {
+                const res = await fetch('/api/board/create-game', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        pin,
+                        pinConfirm: pin2,
+                        dmPin,
+                        dmPinConfirm: dmPin2
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    if (status) status.textContent = data.error || 'Could not create game.';
+                    return;
+                }
+                GameAccess.set({
+                    gameAccessToken: data.gameAccessToken,
+                    gameId: data.gameId,
+                    gameName: data.gameName,
+                    systemLabel: data.systemLabel,
+                    expiresAt: data.expiresAt
+                });
+                if (status) status.textContent = '';
+                await loadBoard();
+                showEntry();
+                await loadEntry();
+            } catch (e) {
+                if (status) status.textContent = 'Network error';
+                console.error(e);
+            }
+        }
+
+        function packageHasTablePin(pkg) {
+            const a = pkg && (pkg.tableAccess || pkg.access);
+            return !!(a && a.pinHash && a.salt);
+        }
+        function packageHasDmPin(pkg) {
+            const a = pkg && (pkg.dmAccess || pkg.dmNotes || pkg.dm);
+            return !!(a && a.pinHash && a.salt);
+        }
+
+        function updateBoardImportPinVisibility() {
+            const wrap = $('board-import-pin-fields');
+            if (!wrap) return;
+            const pkg = _boardImportParsed;
+            if (!pkg) {
+                wrap.style.display = 'block';
+                return;
+            }
+            const needTable = !packageHasTablePin(pkg);
+            const needDm = !packageHasDmPin(pkg);
+            wrap.style.display = (needTable || needDm) ? 'block' : 'none';
+            const tableLab = $('board-import-table-pin') && $('board-import-table-pin').closest('label');
+            const dmLab = $('board-import-dm-pin') && $('board-import-dm-pin').closest('label');
+            if (tableLab) tableLab.style.display = needTable ? '' : 'none';
+            if (dmLab) dmLab.style.display = needDm ? '' : 'none';
+        }
+
+        function onBoardImportFileChange() {
+            const status = $('board-status');
+            const fileEl = $('board-import-file');
+            const btn = $('board-import-game-btn');
+            const fileMeta = $('board-import-file-meta');
+            _boardImportParsed = null;
+            if (btn) btn.disabled = true;
+            const file = fileEl && fileEl.files && fileEl.files[0];
+            if (!file) {
+                if (fileMeta) fileMeta.textContent = 'Choose a .json export file.';
+                updateBoardImportPinVisibility();
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const parsed = JSON.parse(String(reader.result || ''));
+                    if (!parsed || typeof parsed !== 'object') throw new Error('Not a JSON object');
+                    const camps = parsed.campaigns || (parsed.state && parsed.state.campaigns);
+                    if (!Array.isArray(camps) || !camps.length) {
+                        throw new Error('File needs a non-empty campaigns array');
+                    }
+                    _boardImportParsed = parsed;
+                    const name = parsed.gameName || parsed.name || camps[0].name || 'Imported Game';
+                    const pins = [];
+                    if (packageHasTablePin(parsed)) pins.push('table PIN in file');
+                    if (packageHasDmPin(parsed)) pins.push('DM PIN in file');
+                    if (fileMeta) {
+                        fileMeta.textContent = file.name + ' · ' + name +
+                            (pins.length ? ' · ' + pins.join(', ') : ' · pins needed below');
+                    }
+                    if (btn) btn.disabled = false;
+                    updateBoardImportPinVisibility();
+                    if (status) status.textContent = '';
+                } catch (e) {
+                    _boardImportParsed = null;
+                    if (fileMeta) fileMeta.textContent = 'Could not read file: ' + (e.message || e);
+                    if (btn) btn.disabled = true;
+                    updateBoardImportPinVisibility();
+                }
+            };
+            reader.onerror = () => {
+                if (fileMeta) fileMeta.textContent = 'Could not read file.';
+                if (btn) btn.disabled = true;
+            };
+            reader.readAsText(file);
+        }
+
+        async function importGameFromBoard() {
+            const status = $('board-status');
+            if (!_boardImportParsed) {
+                if (status) status.textContent = 'Choose an import file first.';
+                return;
+            }
+            const pkg = Object.assign({}, _boardImportParsed);
+            if (!packageHasTablePin(pkg)) {
+                pkg.tablePin = ($('board-import-table-pin') && $('board-import-table-pin').value) || '';
+                if (pkg.tablePin.length < 4) {
+                    if (status) status.textContent = 'Enter a table PIN (4+ chars) — file has none.';
+                    return;
                 }
             }
-            if (status) status.textContent = '';
-            onGameSelectChange();
-        } catch (e) {
-            if (status) status.textContent = 'Could not load Game Board.';
-            console.error(e);
-        }
-    }
-
-    function onGameSelectChange() {
-        const sel = $('board-game-select');
-        const id = sel && sel.value;
-        selectedGame = boardGames.find(g => g.id === id) || null;
-        const meta = $('board-game-meta');
-        const pinBlock = $('board-pin-block');
-        const pinHint = $('board-pin-hint');
-        const pinLabel = $('board-pin-label');
-        const btn = $('board-unlock-btn');
-        const pinInput = $('board-game-pin');
-
-        if (!selectedGame) {
-            if (meta) meta.textContent = '';
-            if (pinBlock) pinBlock.style.display = 'none';
-            return;
-        }
-
-        if (meta) {
-            meta.textContent =
-                (selectedGame.systemLabel || 'D&D') +
-                (selectedGame.campaignCount
-                    ? ' · ' + selectedGame.campaignCount + ' campaign(s) on disk'
-                    : ' · blank / empty table') +
-                (selectedGame.needsPinSetup ? ' · first-time PIN setup' : '');
-        }
-
-        setupMode = !!selectedGame.needsPinSetup;
-        if (pinBlock) pinBlock.style.display = 'block';
-        if (pinInput) pinInput.value = '';
-        if (pinHint) {
-            pinHint.textContent = setupMode
-                ? 'No table PIN yet. Choose a PIN (4+ chars) that players will use to open this game tonight.'
-                : 'Enter the shared table PIN for this game (not the DM Notes PIN).';
-        }
-        if (pinLabel) {
-            const lab = pinLabel.querySelector('input') ? null : null;
-            // update label text node
-            pinLabel.childNodes[0].textContent = setupMode ? 'Create game PIN ' : 'Game PIN ';
-        }
-        if (btn) {
-            btn.innerHTML = setupMode
-                ? '<i class="fa-solid fa-shield-halved"></i> Set PIN & enter table'
-                : '<i class="fa-solid fa-door-open"></i> Enter table';
-        }
-    }
-
-    async function unlockOrSetup() {
-        const status = $('board-status');
-        if (!selectedGame) {
-            if (status) status.textContent = 'Select a game first.';
-            return;
-        }
-        const pin = ($('board-game-pin') && $('board-game-pin').value) || '';
-        if (pin.length < 4) {
-            if (status) status.textContent = 'PIN must be at least 4 characters.';
-            return;
-        }
-        if (status) status.textContent = 'Checking…';
-        try {
-            const path = setupMode || selectedGame.needsPinSetup
-                ? '/api/board/setup-pin'
-                : '/api/board/unlock';
-            const res = await fetch(path, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ gameId: selectedGame.id, pin })
-            });
-            const data = await res.json();
-            if (res.status === 428 || data.needsPinSetup) {
-                setupMode = true;
-                selectedGame.needsPinSetup = true;
-                onGameSelectChange();
-                if (status) status.textContent = data.error || 'Set a table PIN first.';
-                return;
+            if (!packageHasDmPin(pkg)) {
+                pkg.dmPin = ($('board-import-dm-pin') && $('board-import-dm-pin').value) || '';
+                if (pkg.dmPin.length < 4) {
+                    if (status) status.textContent = 'Enter a DM PIN (4+ chars) — file has none.';
+                    return;
+                }
+                if (pkg.tablePin && pkg.dmPin === pkg.tablePin) {
+                    if (status) status.textContent = 'DM PIN must differ from table PIN.';
+                    return;
+                }
             }
-            if (!res.ok) {
-                if (status) status.textContent = data.error || 'Unlock failed';
-                return;
+            if (status) status.textContent = 'Importing game…';
+            try {
+                const res = await fetch('/api/board/import-game', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(pkg)
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    if (status) status.textContent = data.error || 'Import failed';
+                    return;
+                }
+                GameAccess.set({
+                    gameAccessToken: data.gameAccessToken,
+                    gameId: data.gameId,
+                    gameName: data.gameName,
+                    systemLabel: data.systemLabel,
+                    expiresAt: data.expiresAt
+                });
+                if (status) status.textContent = '';
+                await loadBoard();
+                showEntry();
+                await loadEntry();
+            } catch (e) {
+                if (status) status.textContent = 'Network error';
+                console.error(e);
             }
-            GameAccess.set({
-                gameAccessToken: data.gameAccessToken,
-                gameId: data.gameId,
-                gameName: data.gameName,
-                systemLabel: data.systemLabel,
-                expiresAt: data.expiresAt
-            });
-            if (status) status.textContent = '';
-            showEntry();
-            await loadEntry();
-        } catch (e) {
-            if (status) status.textContent = 'Network error';
-            console.error(e);
         }
-    }
 
     async function loadEntry() {
         const status = $('entry-status');
@@ -389,6 +653,10 @@
         const pinBox = $('entry-dm-pin');
         const pin = pinBox ? pinBox.value : '';
         const label = ($('entry-dm-label') && $('entry-dm-label').value) || 'DM';
+        if (!pin || pin.length < 4) {
+            alert('Enter the DM PIN (set when the game was created).');
+            return;
+        }
         try {
             const res = await fetch('/api/seats/dm', {
                 method: 'POST',
@@ -514,6 +782,21 @@
                 if (e.key === 'Enter') unlockOrSetup();
             });
         }
+        const createBtn = $('board-create-game-btn');
+        if (createBtn) createBtn.addEventListener('click', createNewGame);
+        ['board-new-game-name', 'board-new-game-pin', 'board-new-game-pin2',
+            'board-new-dm-pin', 'board-new-dm-pin2'].forEach(id => {
+            const el = $(id);
+            if (el) {
+                el.addEventListener('keydown', e => {
+                    if (e.key === 'Enter') createNewGame();
+                });
+            }
+        });
+        const importFile = $('board-import-file');
+        if (importFile) importFile.addEventListener('change', onBoardImportFileChange);
+        const importBtn = $('board-import-game-btn');
+        if (importBtn) importBtn.addEventListener('click', importGameFromBoard);
 
         // Resume paths
         const game = GameAccess.get();
