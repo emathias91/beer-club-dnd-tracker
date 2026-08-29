@@ -4,7 +4,7 @@
 let state = {
     campaigns: [],
     activeCampaignId: '',
-    activeCharacterId: 'Elowen',
+    activeCharacterId: null,
     zoomLevel: 1.0,
     isAddingMarker: false,
     combatants: [],
@@ -131,6 +131,7 @@ window.bootCampaignApp = async function bootCampaignApp() {
     initNavigation();
     initMapPanel();
     initCharacterPanel();
+    initPlayerNotesUi();
     initEquipmentInventory();
     initSkillsPanel();
     initCombatPanel();
@@ -318,6 +319,20 @@ async function dmToggleCharLock(lock) {
 function applyServerSnapshot(fetchedState) {
     const keepChar = state.activeCharacterId;
     const keepZoom = state.zoomLevel;
+    // Preserve local private fields if server omitted them (non-owner strip) but we still own the seat
+    const privateKeep = {};
+    (state.campaigns || []).forEach(camp => {
+        Object.keys(camp.characters || {}).forEach(charId => {
+            if (!canEditPlayerPrivate(charId)) return;
+            const c = camp.characters[charId];
+            if (!c) return;
+            privateKeep[camp.id + ':' + charId] = {
+                playerNotes: c.playerNotes,
+                playerPassphrase: c.playerPassphrase
+            };
+        });
+    });
+
     // Hold local combat if we just changed it and server may still be stale
     const holdCombat = Date.now() < (_suppressCombatSyncUntil || 0);
     const localCombat = holdCombat
@@ -330,6 +345,18 @@ function applyServerSnapshot(fetchedState) {
         : null;
 
     state.campaigns = fetchedState.campaigns || [];
+    // Re-apply preserved private fields when server snapshot omitted them for non-owners of OTHER devices
+    (state.campaigns || []).forEach(camp => {
+        Object.keys(camp.characters || {}).forEach(charId => {
+            const key = camp.id + ':' + charId;
+            const kept = privateKeep[key];
+            if (!kept || !canEditPlayerPrivate(charId)) return;
+            const c = camp.characters[charId];
+            if (!c) return;
+            if (c.playerNotes == null && kept.playerNotes != null) c.playerNotes = kept.playerNotes;
+            if (c.playerPassphrase == null && kept.playerPassphrase != null) c.playerPassphrase = kept.playerPassphrase;
+        });
+    });
     if (!holdCombat) {
         state.combatants = fetchedState.combatants || [];
         state.activeCombatantIndex = typeof fetchedState.activeCombatantIndex === 'number'
@@ -360,12 +387,11 @@ function applyServerSnapshot(fetchedState) {
     if (fetchedState.activeCampaignId) {
         state.activeCampaignId = fetchedState.activeCampaignId;
     }
-    // restore local-only UI
+    // restore local-only UI (tab selection is per-browser — do not force seat character on every poll)
     state.activeCharacterId = keepChar || state.activeCharacterId;
     state.zoomLevel = keepZoom;
-    if (window.SeatSession && SeatSession.characterId()) {
-        state.activeCharacterId = SeatSession.characterId();
-    }
+    // Seat only sets the default tab at boot (applySeatFocus). Players may view other sheets
+    // without losing their seat; poll must not yank the tab back.
 }
 
 async function loadState() {
@@ -464,7 +490,7 @@ function loadStateFromLocalStorage() {
             // Apply parsed values
             state.campaigns = parsed.campaigns || [];
             state.activeCampaignId = parsed.activeCampaignId || '';
-            state.activeCharacterId = parsed.activeCharacterId || 'Elowen';
+            state.activeCharacterId = parsed.activeCharacterId || null;
             state.zoomLevel = parsed.zoomLevel || 1.0;
             state.combatants = parsed.combatants || [];
             state.activeCombatantIndex = parsed.activeCombatantIndex || 0;
@@ -1715,6 +1741,110 @@ function commitActiveEquipment(items) {
     saveState();
 }
 
+function canEditPlayerPrivate(charId) {
+    if (!charId) return false;
+    if (window.SeatSession && typeof SeatSession.isDm === 'function' && SeatSession.isDm()) return true;
+    if (window.SeatSession && typeof SeatSession.get === 'function') {
+        const s = SeatSession.get();
+        if (s && s.role === 'player' && s.characterId === charId) return true;
+    }
+    // Offline / no seats: allow local editing
+    if (!window.SeatSession || typeof SeatSession.get !== 'function' || !SeatSession.get()) return true;
+    return false;
+}
+
+let _backstoryTab = 'story';
+
+function setBackstoryTab(tab) {
+    const canSeePlayerNotes = canEditPlayerPrivate(state.activeCharacterId);
+    // Never land on player-notes tab if this viewer isn't allowed to see it
+    if (tab === 'player' && !canSeePlayerNotes) tab = 'story';
+    _backstoryTab = tab === 'player' ? 'player' : 'story';
+    const storyPanel = document.getElementById('char-backstory-panel-story');
+    const playerPanel = document.getElementById('char-backstory-panel-player');
+    const tabStory = document.getElementById('tab-story-traits');
+    const tabPlayer = document.getElementById('tab-player-notes');
+    const tabsWrap = document.querySelector('.char-backstory-tabs');
+
+    if (tabPlayer) {
+        // Hide the whole tab when viewing another player's sheet as a PC
+        tabPlayer.style.display = canSeePlayerNotes ? '' : 'none';
+    }
+    // If only one visible tab, tighten the tab row chrome
+    if (tabsWrap) {
+        tabsWrap.style.display = canSeePlayerNotes ? '' : 'none';
+    }
+
+    if (storyPanel) storyPanel.style.display = _backstoryTab === 'story' ? '' : 'none';
+    if (playerPanel) {
+        playerPanel.style.display = (canSeePlayerNotes && _backstoryTab === 'player') ? '' : 'none';
+    }
+    if (tabStory) {
+        tabStory.classList.toggle('active', _backstoryTab === 'story');
+        tabStory.setAttribute('aria-selected', _backstoryTab === 'story' ? 'true' : 'false');
+    }
+    if (tabPlayer) {
+        tabPlayer.classList.toggle('active', _backstoryTab === 'player');
+        tabPlayer.setAttribute('aria-selected', _backstoryTab === 'player' ? 'true' : 'false');
+    }
+}
+
+function renderPlayerPrivateNotes(c) {
+    const charId = state.activeCharacterId;
+    const canEdit = canEditPlayerPrivate(charId);
+    const gate = document.getElementById('player-notes-gate-hint');
+    const editor = document.getElementById('player-notes-editor');
+    const notesEl = document.getElementById('char-player-notes');
+    const passEl = document.getElementById('char-player-passphrase');
+    const status = document.getElementById('player-notes-status');
+    if (status) status.textContent = '';
+
+    // Non-owners: tab is hidden — don't show locked message either
+    if (!canEdit) {
+        if (gate) gate.style.display = 'none';
+        if (editor) editor.style.display = 'none';
+        if (notesEl) notesEl.value = '';
+        if (passEl) passEl.value = '';
+        return;
+    }
+    if (gate) gate.style.display = 'none';
+    if (editor) editor.style.display = 'block';
+    if (notesEl) notesEl.value = (c && c.playerNotes) || '';
+    if (passEl) passEl.value = (c && c.playerPassphrase) || '';
+}
+
+function initPlayerNotesUi() {
+    document.querySelectorAll('[data-backstory-tab]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setBackstoryTab(btn.getAttribute('data-backstory-tab'));
+        });
+    });
+    const saveBtn = document.getElementById('btn-save-player-notes');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            const active = getActiveCampaign();
+            if (!active) return;
+            const charId = state.activeCharacterId;
+            if (!canEditPlayerPrivate(charId)) {
+                alert('Only the seated player for this character (or DM) can edit private notes.');
+                return;
+            }
+            const c = active.characters[charId];
+            if (!c) return;
+            c.playerNotes = (document.getElementById('char-player-notes') || {}).value || '';
+            c.playerPassphrase = (document.getElementById('char-player-passphrase') || {}).value || '';
+            const status = document.getElementById('player-notes-status');
+            if (status) status.textContent = 'Saving…';
+            saveState();
+            // Piecewise save if available
+            if (typeof smartSaveToServer === 'function' && IS_SERVER_MODE) {
+                await smartSaveToServer();
+            }
+            if (status) status.textContent = 'Saved.';
+        });
+    }
+}
+
 function renderBackstoryAndTraits(c) {
     const el = document.getElementById('char-backstory');
     if (!el) return;
@@ -1747,21 +1877,23 @@ function renderBackstoryAndTraits(c) {
         p.className = 'backstory-empty';
         p.textContent = 'No backstory or traits written for this character.';
         el.appendChild(p);
-        return;
+    } else {
+        sections.forEach(sec => {
+            const wrap = document.createElement('section');
+            wrap.className = 'backstory-section';
+            const h = document.createElement('h4');
+            h.textContent = sec.title;
+            const body = document.createElement('div');
+            body.className = 'backstory-body';
+            body.textContent = sec.text;
+            wrap.appendChild(h);
+            wrap.appendChild(body);
+            el.appendChild(wrap);
+        });
     }
 
-    sections.forEach(sec => {
-        const wrap = document.createElement('section');
-        wrap.className = 'backstory-section';
-        const h = document.createElement('h4');
-        h.textContent = sec.title;
-        const body = document.createElement('div');
-        body.className = 'backstory-body';
-        body.textContent = sec.text;
-        wrap.appendChild(h);
-        wrap.appendChild(body);
-        el.appendChild(wrap);
-    });
+    renderPlayerPrivateNotes(c);
+    setBackstoryTab(_backstoryTab || 'story');
 }
 
 function renderEquipmentGrid(equipmentText) {
@@ -2929,7 +3061,7 @@ function initDmPanel() {
                 dmState.pin = a;
                 textEl.value = '';
                 dmShow('dm-editor');
-                dmSetStatus('PIN set. These notes are stored on the Beelink.');
+                dmSetStatus('PIN set. These notes stay on the host server only.');
             } else {
                 err.innerText = r.data.error || 'Could not set the PIN.';
             }
@@ -4254,8 +4386,17 @@ function initCampaignSettings() {
     
     // Create new campaign (blank slate) — modal + empty-state buttons
     const onCreate = async () => {
-        const name = prompt('Enter a name for your new Campaign:');
-        if (!name) return;
+        // First campaign on an empty table: use the Game Board name (no second naming prompt).
+        // Extra campaigns (or rename) still go through Campaign Settings.
+        const emptyTable = !state.campaigns || state.campaigns.length === 0;
+        let name = '';
+        if (emptyTable) {
+            const g = (window.GameAccess && typeof GameAccess.get === 'function') ? GameAccess.get() : null;
+            name = (g && g.gameName) || 'Main Campaign';
+        } else {
+            name = prompt('Enter a name for this additional campaign (adventure arc):');
+            if (!name) return;
+        }
         const ok = await createBlankCampaign(name);
         if (ok) {
             document.getElementById('modal-campaign-settings').style.display = 'none';
@@ -4264,79 +4405,155 @@ function initCampaignSettings() {
     document.getElementById('btn-create-campaign-new').addEventListener('click', onCreate);
     const emptyCreateBtn = document.getElementById('btn-create-campaign-empty');
     if (emptyCreateBtn) emptyCreateBtn.addEventListener('click', onCreate);
-    
-    // Clone campaign (keeps characters & markers, resets logs)
-    document.getElementById('btn-clone-campaign-new').addEventListener('click', async () => {
-        const active = getActiveCampaign();
-        if (!active) {
-            alert('No campaign to clone. Create a campaign first.');
-            return;
-        }
-        const name = prompt(`Enter name for the cloned campaign:`, `${active.name} (Cloned)`);
-        if (!name) return;
-        
-        const newId = 'campaign-' + Date.now();
-        const clonedCampaign = {
-            id: newId,
-            name: name,
-            mapImage: active.mapImage,
-            characters: JSON.parse(JSON.stringify(active.characters)),
-            sessionLogs: [],
-            mapMarkers: JSON.parse(JSON.stringify(active.mapMarkers)),
-            partyPosition: JSON.parse(JSON.stringify(active.partyPosition))
+    const addCampaignBtn = document.getElementById('btn-add-campaign');
+        if (addCampaignBtn) addCampaignBtn.addEventListener('click', onCreate);
+
+        // Delete campaign — pick which one (map panel + settings)
+        const openDeleteCampaignPicker = () => {
+            openDeleteCampaignModal();
         };
-        
-        state.campaigns.push(clonedCampaign);
-        state.activeCampaignId = newId;
-        
-        const charKeys = Object.keys(clonedCampaign.characters);
-        state.activeCharacterId = charKeys.length > 0 ? charKeys[0] : '';
-        state.combatants = initDefaultCombatants(clonedCampaign.characters);
-        state.activeCombatantIndex = 0;
-        state.combatRound = 1;
-        
-        if (IS_SERVER_MODE) {
-            await saveStateToServer();
-        } else {
-            saveState();
+        const delCampaignBtn = document.getElementById('btn-delete-campaign');
+        if (delCampaignBtn) delCampaignBtn.addEventListener('click', openDeleteCampaignPicker);
+        document.getElementById('btn-delete-campaign-active').addEventListener('click', () => {
+            document.getElementById('modal-campaign-settings').style.display = 'none';
+            openDeleteCampaignModal();
+        });
+        const delConfirm = document.getElementById('btn-delete-campaign-confirm');
+        if (delConfirm) {
+            delConfirm.addEventListener('click', async () => {
+                const sel = document.getElementById('delete-campaign-select');
+                const id = sel && sel.value;
+                if (!id) {
+                    alert('Select a campaign to delete.');
+                    return;
+                }
+                const camp = (state.campaigns || []).find(c => c.id === id);
+                const label = camp ? camp.name : id;
+                if (!confirm('Permanently delete campaign "' + label + '" only?\n\nCharacters, map pins, and logs for this campaign will be removed. Other campaigns are kept.')) {
+                    return;
+                }
+                delConfirm.disabled = true;
+                const ok = await deleteCampaignById(id);
+                delConfirm.disabled = false;
+                if (ok) {
+                    const modal = document.getElementById('modal-delete-campaign');
+                    if (modal) modal.style.display = 'none';
+                }
+            });
         }
-        renderCampaignSelector();
-        renderAll();
-        document.getElementById('modal-campaign-settings').style.display = 'none';
-        
-        logRoll('System', 'Clone Campaign', '-', `Cloned ${active.name} to ${name}`);
-    });
     
-    // Delete campaign
-    document.getElementById('btn-delete-campaign-active').addEventListener('click', () => {
-        const active = getActiveCampaign();
-        if (!active) {
-            alert('No campaign to delete.');
-            return;
-        }
-        if (state.campaigns.length <= 1) {
-            alert('Cannot delete the last remaining campaign. Create a new campaign first!');
-            return;
-        }
+        // Clone campaign (keeps characters & markers, resets logs)
+        document.getElementById('btn-clone-campaign-new').addEventListener('click', async () => {
+            const active = getActiveCampaign();
+            if (!active) {
+                alert('No campaign to clone. Create a campaign first.');
+                return;
+            }
+            const name = prompt(`Enter name for the cloned campaign:`, `${active.name} (Cloned)`);
+            if (!name) return;
         
-        if (confirm(`Are you sure you want to delete campaign "${active.name}"? This will delete all characters, maps, and logs for this campaign permanently.`)) {
-            state.campaigns = state.campaigns.filter(c => c.id !== active.id);
-            state.activeCampaignId = state.campaigns[0].id;
-            
-            const nextCampaign = getActiveCampaign();
-            const charKeys = Object.keys(nextCampaign.characters);
+            const newId = 'campaign-' + Date.now();
+            const clonedCampaign = {
+                id: newId,
+                name: name,
+                mapImage: active.mapImage,
+                characters: JSON.parse(JSON.stringify(active.characters)),
+                sessionLogs: [],
+                mapMarkers: JSON.parse(JSON.stringify(active.mapMarkers)),
+                partyPosition: JSON.parse(JSON.stringify(active.partyPosition))
+            };
+        
+            state.campaigns.push(clonedCampaign);
+            state.activeCampaignId = newId;
+        
+            const charKeys = Object.keys(clonedCampaign.characters);
             state.activeCharacterId = charKeys.length > 0 ? charKeys[0] : '';
-            state.combatants = initDefaultCombatants(nextCampaign.characters);
+            state.combatants = initDefaultCombatants(clonedCampaign.characters);
             state.activeCombatantIndex = 0;
             state.combatRound = 1;
-            
-            saveState();
+        
+            if (IS_SERVER_MODE) {
+                await saveStateToServer();
+            } else {
+                saveState();
+            }
             renderCampaignSelector();
             renderAll();
             document.getElementById('modal-campaign-settings').style.display = 'none';
+        
+            logRoll('System', 'Clone Campaign', '-', `Cloned ${active.name} to ${name}`);
+        });
+    }
+
+    function openDeleteCampaignModal() {
+        const camps = state.campaigns || [];
+        if (!camps.length) {
+            alert('No campaigns to delete.');
+            return;
         }
-    });
-}
+        const sel = document.getElementById('delete-campaign-select');
+        if (!sel) return;
+        sel.innerHTML = '';
+        camps.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name + (c.id === state.activeCampaignId ? ' (current)' : '');
+            if (c.id === state.activeCampaignId) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        const modal = document.getElementById('modal-delete-campaign');
+        if (modal) modal.style.display = 'flex';
+        setTimeout(() => sel.focus(), 40);
+    }
+
+    /**
+     * Remove one campaign by id. Other campaigns stay.
+     * Returns true if deleted and saved.
+     */
+    async function deleteCampaignById(campaignId) {
+        const id = String(campaignId || '');
+        const camp = (state.campaigns || []).find(c => c.id === id);
+        if (!camp) {
+            alert('Campaign not found.');
+            return false;
+        }
+
+        const wasActive = state.activeCampaignId === id;
+        state.campaigns = state.campaigns.filter(c => c.id !== id);
+
+        if (!state.campaigns.length) {
+            state.activeCampaignId = '';
+            state.activeCharacterId = null;
+            state.combatants = [];
+            state.activeCombatantIndex = 0;
+            state.combatRound = 1;
+        } else if (wasActive) {
+            state.activeCampaignId = state.campaigns[0].id;
+            const next = getActiveCampaign();
+            const charKeys = next && next.characters ? Object.keys(next.characters) : [];
+            state.activeCharacterId = charKeys.length ? charKeys[0] : null;
+            state.combatants = next ? initDefaultCombatants(next.characters || {}) : [];
+            state.activeCombatantIndex = 0;
+            state.combatRound = 1;
+        }
+
+        let ok = true;
+        if (IS_SERVER_MODE) {
+            ok = await saveStateToServer();
+            if (!ok) {
+                alert('Could not save after deleting the campaign. Check sync status.');
+            }
+        } else {
+            saveState();
+        }
+
+        renderCampaignSelector();
+        renderAll();
+        if (typeof logRoll === 'function') {
+            logRoll('System', 'Delete Campaign', '-', 'Deleted campaign: ' + camp.name);
+        }
+        return ok;
+    }
 
 /** Starter character blob for a brand-new blank campaign. */
 function buildStarterCharacter() {
@@ -4473,6 +4690,8 @@ function updateEmptyCampaignChrome() {
     const sub = document.getElementById('map-panel-sub');
     const partyDesc = document.getElementById('party-loc-desc');
     const addMarker = document.getElementById('btn-add-marker-modal');
+    const addCampaign = document.getElementById('btn-add-campaign');
+    const delCampaign = document.getElementById('btn-delete-campaign');
     const select = document.getElementById('campaign-select');
 
     if (overlay) overlay.style.display = empty ? 'flex' : 'none';
@@ -4481,9 +4700,16 @@ function updateEmptyCampaignChrome() {
         const missing = document.getElementById('map-missing-overlay');
         if (missing) missing.style.display = 'none';
         if (heading) heading.textContent = 'Campaign Map';
-        if (sub) sub.textContent = 'No campaign on this table yet.';
+        if (sub) {
+            const g = (window.GameAccess && typeof GameAccess.get === 'function') ? GameAccess.get() : null;
+            const gName = (g && g.gameName) || 'this game';
+            sub.textContent = 'Game table “' + gName + '” is ready — start a campaign to add characters and a map.';
+        }
         if (partyDesc) partyDesc.textContent = '—';
         if (addMarker) addMarker.disabled = true;
+        // Empty table: primary CTA is the centered "Start campaign" card
+        if (addCampaign) addCampaign.style.display = 'none';
+        if (delCampaign) delCampaign.style.display = 'none';
         if (select) {
             select.innerHTML = '';
             const opt = document.createElement('option');
@@ -4497,6 +4723,9 @@ function updateEmptyCampaignChrome() {
 
     if (select) select.disabled = false;
     if (addMarker) addMarker.disabled = false;
+    // Show Add/Delete Campaign once at least one campaign exists
+    if (addCampaign) addCampaign.style.display = '';
+    if (delCampaign) delCampaign.style.display = '';
     if (heading) heading.textContent = (active && active.name) ? active.name : 'Campaign Map';
     if (sub) {
         sub.textContent = "Track the party's journey and pin notable locations. Drag the Shield token to move the party.";
@@ -4574,24 +4803,48 @@ function canUseDestructiveAdmin() {
 function updateAdminToolsChrome() {
     const importBtn = document.getElementById('btn-import-trigger');
     const resetBtn = document.getElementById('btn-reset-data');
+    const exportDmBtn = document.getElementById('btn-export-data');
+    const exportPlayerBtn = document.getElementById('btn-export-player');
     const hint = document.getElementById('admin-tools-hint');
-    const allowed = canUseDestructiveAdmin();
+    const isDm = canUseDestructiveAdmin();
+    let isPlayerSeat = false;
+    if (window.SeatSession && typeof SeatSession.get === 'function') {
+        const seat = SeatSession.get();
+        isPlayerSeat = !!(seat && seat.role === 'player');
+    }
+
     if (importBtn) {
-        importBtn.disabled = !allowed;
-        importBtn.title = allowed
+        importBtn.style.display = isDm ? '' : 'none';
+        importBtn.disabled = !isDm;
+        importBtn.title = isDm
             ? 'Replace live campaign data inside this game from JSON (DM)'
             : 'DM seat required to import campaign data';
     }
     if (resetBtn) {
-        resetBtn.disabled = !allowed;
-        resetBtn.title = allowed
+        resetBtn.style.display = isDm ? '' : 'none';
+        resetBtn.disabled = !isDm;
+        resetBtn.title = isDm
             ? 'Permanently delete this game from the board (type DELETE)'
             : 'DM seat required to delete the game';
     }
+    // DM: full export only (already has all player private data via seat)
+    if (exportDmBtn) {
+        exportDmBtn.style.display = isDm ? '' : 'none';
+        exportDmBtn.disabled = !isDm;
+        exportDmBtn.title = 'DM only: full package with PIN material, DM notes, and all player private fields';
+    }
+    // Players: review copy only (own secrets; no DM notes / PIN hashes)
+    if (exportPlayerBtn) {
+        exportPlayerBtn.style.display = isPlayerSeat ? '' : 'none';
+        exportPlayerBtn.disabled = !isPlayerSeat;
+        exportPlayerBtn.title = isPlayerSeat
+            ? 'Export only your character sheet + shared map/game data (no other players)'
+            : 'Available when seated as a player character';
+    }
     if (hint) {
-        if (!allowed) {
+        if (isPlayerSeat && !isDm) {
             hint.style.display = 'block';
-            hint.textContent = 'Import Campaign / Delete Game: DM seat only. Export is always available.';
+            hint.textContent = 'Player seat: Export My Character only. Import / Delete / full Export are DM tools.';
         } else {
             hint.style.display = 'none';
             hint.textContent = '';
@@ -4603,6 +4856,12 @@ function updateAdminToolsChrome() {
 async function refreshExportStaleBanner() {
     const el = document.getElementById('export-stale-banner');
     if (!el || !IS_SERVER_MODE) return;
+    // DM-only reminder (players don't use full package export)
+    if (!canUseDestructiveAdmin()) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+    }
     try {
         const res = await fetch('/api/export-status', {
             cache: 'no-store',
@@ -4616,13 +4875,13 @@ async function refreshExportStaleBanner() {
         if (data.stale) {
             el.style.display = 'block';
             if (!data.lastExportedAt) {
-                el.textContent = 'No full game export yet. Export Game so table + DM PINs are backed up.';
+                el.textContent = 'No full game export yet. Export Game (DM) so table + DM PINs are backed up.';
             } else {
                 const mins = Math.floor((data.ageMs || 0) / 60000);
                 const ago = mins >= 60
                     ? (Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm ago')
                     : (mins + ' min ago');
-                el.textContent = 'Last game export was ' + ago + '. Export again if you made important changes.';
+                el.textContent = 'Last DM game export was ' + ago + '. Export again if you made important changes.';
             }
         } else {
             el.style.display = 'none';
@@ -4779,8 +5038,57 @@ async function applyFullStateReplace(payload, logLabel) {
 function initImportExport() {
     updateAdminToolsChrome();
 
+    // Player-safe review export (any seat)
+    const exportPlayerBtn = document.getElementById('btn-export-player');
+    if (exportPlayerBtn) {
+        exportPlayerBtn.addEventListener('click', async () => {
+            try {
+                setSyncStatus('Exporting…', 'warn');
+                let payload;
+                if (IS_SERVER_MODE) {
+                    const res = await fetch('/api/export-player', {
+                        cache: 'no-store',
+                        headers: sessionHeaders()
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err.error || ('Export failed (' + res.status + ')'));
+                    }
+                    payload = await res.json();
+                } else {
+                    payload = buildSharedExportPayload();
+                    payload.schemaHint = 'beer-club-dnd-player-export-v1';
+                    payload.exportKind = 'player_review';
+                    payload.tablePin = '';
+                    payload.dmPin = '';
+                }
+                const safeName = String(payload.gameName || 'campaign')
+                    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+                    .slice(0, 40);
+                const who = payload.viewerCharacterId
+                    ? ('_' + String(payload.viewerCharacterId).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 24))
+                    : '';
+                const name = `dnd_my_character_${safeName}${who}_${new Date().toISOString().split('T')[0]}.json`;
+                const size = downloadJsonBlob(payload, name);
+                setSyncStatus('Exported ' + (size < 1024 ? size + ' B' : (size / 1024).toFixed(1) + ' KB'), 'ok');
+                if (typeof logRoll === 'function') {
+                    logRoll('System', 'Player Export', '-', 'My character export (no other players, no DM notes/PINs).');
+                }
+            } catch (e) {
+                console.error(e);
+                setSyncStatus('Export failed', 'err');
+                alert('Export failed: ' + (e.message || e));
+            }
+        });
+    }
+
+    // Full DM package
     document.getElementById('btn-export-data').addEventListener('click', async () => {
         try {
+            if (!canUseDestructiveAdmin()) {
+                alert('Full game export requires a DM seat. Use Export Player Copy for a review file.');
+                return;
+            }
             setSyncStatus('Exporting…', 'warn');
             let payload;
             if (IS_SERVER_MODE) {
@@ -4796,6 +5104,7 @@ function initImportExport() {
             } else {
                 payload = buildSharedExportPayload();
                 payload.schemaHint = 'beer-club-dnd-game-v2';
+                payload.exportKind = 'dm_full';
             }
             const safeName = String(payload.gameName || 'campaign')
                 .replace(/[^a-zA-Z0-9._-]+/g, '_')
@@ -4804,7 +5113,7 @@ function initImportExport() {
             const size = downloadJsonBlob(payload, name);
             setSyncStatus('Exported ' + (size < 1024 ? size + ' B' : (size / 1024).toFixed(1) + ' KB'), 'ok');
             if (typeof logRoll === 'function') {
-                logRoll('System', 'Data Export', '-', 'Full game package exported (campaign + PIN material).');
+                logRoll('System', 'Data Export', '-', 'Full DM game package exported.');
             }
             refreshExportStaleBanner();
         } catch (e) {

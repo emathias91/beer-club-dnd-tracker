@@ -91,6 +91,10 @@
                 <h1 id="entry-campaign-name">Campaign</h1>
                 <p class="entry-sub">Choose your seat to join the table</p>
             </div>
+            <label class="entry-label" for="entry-char-passphrase">Character passphrase
+                <input type="password" id="entry-char-passphrase" placeholder="Required if that character has a code set" autocomplete="current-password">
+            </label>
+            <p class="entry-hint">If a character shows a lock, enter their passphrase here, then click their seat.</p>
             <div id="entry-character-list" class="entry-character-list"></div>
             <div class="entry-dm-block">
                 <h2><i class="fa-solid fa-dungeon"></i> Dungeon Master</h2>
@@ -170,8 +174,11 @@
             </nav>
             
             <div class="sidebar-footer">
-                <button class="btn-dnd" id="btn-export-data" title="Download full game package (campaign + table/DM PIN material)">
-                    <i class="fa-solid fa-download"></i> Export Game
+                <button class="btn-dnd" id="btn-export-player" title="Export only your character sheet plus shared map/game data (no other players)">
+                    <i class="fa-solid fa-file-export"></i> Export My Character
+                </button>
+                <button class="btn-dnd" id="btn-export-data" title="DM only: full package with PIN material and DM notes">
+                    <i class="fa-solid fa-download"></i> Export Game (DM)
                 </button>
                 <button class="btn-dnd" id="btn-import-trigger" title="Replace live campaign data inside this game (DM)">
                     <i class="fa-solid fa-upload"></i> Import Campaign
@@ -196,6 +203,12 @@
                         <p id="map-panel-sub">Track the party's journey and pin notable locations. Drag the Shield token to move the party.</p>
                     </div>
                     <div class="panel-actions">
+                        <button type="button" class="btn-dnd" id="btn-add-campaign" title="Add another campaign (adventure arc) on this game table">
+                            <i class="fa-solid fa-folder-plus"></i> Add Campaign
+                        </button>
+                        <button type="button" class="btn-dnd" id="btn-delete-campaign" style="color: var(--accent-red); border-color: rgba(166,38,38,0.35);" title="Delete one campaign from this table">
+                            <i class="fa-solid fa-folder-minus"></i> Delete Campaign
+                        </button>
                         <button class="btn-dnd btn-dnd-primary" id="btn-add-marker-modal">
                             <i class="fa-solid fa-map-pin"></i> Add Location Pin
                         </button>
@@ -206,36 +219,6 @@
                     <div class="map-wrapper" id="map-wrapper">
                         <div class="map-image-container" id="map-image-container">
                             <img src="" alt="Campaign map" class="map-img" id="map-image">
-                            
-                            <!-- Shown when the table has zero campaigns (first-run blank table) -->
-                            <div class="map-missing-overlay" id="empty-campaigns-overlay" style="display:none;" aria-live="polite">
-                                <div class="map-missing-card">
-                                    <i class="fa-solid fa-folder-plus"></i>
-                                    <h3>No campaign yet</h3>
-                                    <p>This table is blank. Create a campaign to start tracking characters and maps, or use <strong>Import Campaign</strong> if you have a JSON backup.</p>
-                                    <div class="map-missing-actions">
-                                        <button type="button" class="btn-dnd btn-dnd-primary" id="btn-create-campaign-empty">
-                                            <i class="fa-solid fa-folder-plus"></i> Create Campaign
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Shown when map file is missing -->
-                            <div class="map-missing-overlay" id="map-missing-overlay" style="display:none;" aria-live="polite">
-                                <div class="map-missing-card">
-                                    <i class="fa-solid fa-map-location-dot"></i>
-                                    <h3>No campaign map loaded</h3>
-                                    <p>Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.</p>
-                                    <div class="map-missing-actions">
-                                        <button type="button" class="btn-dnd btn-dnd-primary" id="btn-browse-map">
-                                            <i class="fa-solid fa-folder-open"></i> Browse for map…
-                                        </button>
-                                        <input type="file" id="map-file-input" accept="image/webp,image/png,image/jpeg,image/gif,image/svg+xml,.webp,.png,.jpg,.jpeg,.gif,.svg" hidden>
-                                    </div>
-                                    <p class="map-missing-hint" id="map-missing-status"></p>
-                                </div>
-                            </div>
 
                             <!-- Dynamic markers will be rendered here -->
                             <div id="map-markers-layer"></div>
@@ -243,6 +226,41 @@
                             <!-- Draggable Party Token -->
                             <div class="party-token" id="party-token" draggable="true" title="Drag me to update Party Location!">
                                 <i class="fa-solid fa-shield-halved"></i>
+                            </div>
+                        </div>
+
+                        <!-- Full map-area overlays (must cover map-wrapper, not the zero-size image container) -->
+                        <div class="map-panel-overlay" id="empty-campaigns-overlay" style="display:none;" aria-live="polite">
+                            <div class="map-missing-card">
+                                <i class="fa-solid fa-folder-plus"></i>
+                                <h3>Start this adventure</h3>
+                                <p>
+                                    You’re in the <strong>game table</strong> (PIN, seats, DM).
+                                    A <strong>campaign</strong> is the adventure data inside it — characters, map, and logs.
+                                </p>
+                                <p class="map-overlay-note">
+                                    The first campaign is named after your game automatically. You can rename it later in Campaign Settings.
+                                </p>
+                                <div class="map-missing-actions">
+                                    <button type="button" class="btn-dnd btn-dnd-primary" id="btn-create-campaign-empty">
+                                        <i class="fa-solid fa-play"></i> Start campaign
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="map-panel-overlay" id="map-missing-overlay" style="display:none;" aria-live="polite">
+                            <div class="map-missing-card">
+                                <i class="fa-solid fa-map-location-dot"></i>
+                                <h3>No campaign map loaded</h3>
+                                <p>Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.</p>
+                                <div class="map-missing-actions">
+                                    <button type="button" class="btn-dnd btn-dnd-primary" id="btn-browse-map">
+                                        <i class="fa-solid fa-folder-open"></i> Browse for map…
+                                    </button>
+                                    <input type="file" id="map-file-input" accept="image/webp,image/png,image/jpeg,image/gif,image/svg+xml,.webp,.png,.jpg,.jpeg,.gif,.svg" hidden>
+                                </div>
+                                <p class="map-missing-hint" id="map-missing-status"></p>
                             </div>
                         </div>
                         
@@ -499,8 +517,32 @@
 
                 <!-- Full-width Backstory under the 3-column sheet -->
                 <div class="dnd-card char-backstory-full">
-                    <div class="dnd-card-title">Backstory & Traits</div>
-                    <div id="char-backstory" class="char-backstory-text"></div>
+                    <div class="dnd-card-title char-backstory-title-row">
+                        <span>Backstory &amp; Notes</span>
+                        <div class="char-backstory-tabs" role="tablist">
+                            <button type="button" class="char-tab-btn active" id="tab-story-traits" data-backstory-tab="story" role="tab" aria-selected="true">Story &amp; Traits</button>
+                            <button type="button" class="char-tab-btn" id="tab-player-notes" data-backstory-tab="player" role="tab" aria-selected="false">Player Only Notes</button>
+                        </div>
+                    </div>
+                    <div id="char-backstory-panel-story" class="char-backstory-panel" data-panel="story">
+                        <div id="char-backstory" class="char-backstory-text"></div>
+                    </div>
+                    <div id="char-backstory-panel-player" class="char-backstory-panel" data-panel="player" style="display:none;">
+                        <p class="entry-hint" id="player-notes-gate-hint" style="display:none;">Only the player seated on this character (or the DM) can view or edit these notes.</p>
+                        <div id="player-notes-editor" style="display:none;">
+                            <label class="entry-label" for="char-player-notes">Private notes (not shared with other players)
+                                <textarea id="char-player-notes" class="char-player-notes-ta" rows="8" placeholder="Secrets only this character’s player should know…"></textarea>
+                            </label>
+                            <label class="entry-label" for="char-player-passphrase" style="margin-top:10px;">Character passphrase / code
+                                <input type="text" id="char-player-passphrase" placeholder="Players enter this code to sit as this character" autocomplete="off">
+                            </label>
+                            <p class="entry-hint">This code is required to claim this seat on the Game Board. It is also included when you Export My Character. Other players never see it in the live app.</p>
+                            <button type="button" class="btn-dnd btn-dnd-primary" id="btn-save-player-notes" style="margin-top:8px;">
+                                <i class="fa-solid fa-floppy-disk"></i> Save private notes
+                            </button>
+                            <span id="player-notes-status" class="entry-status"></span>
+                        </div>
+                    </div>
                 </div>
                 </div>
             </section>
@@ -707,7 +749,7 @@
                         </div>
                         <div class="rule-item">
                             <h5>Dwarven Trance (4 Hours)</h5>
-                            <p>Elf character (Elowen) finishes a long rest in 4 hours if spending it in a trancelike state.</p>
+                            <p>An elf finishes a long rest in 4 hours if spending it in a trancelike state.</p>
                         </div>
                     </div>
 
@@ -719,7 +761,7 @@
                 <div class="panel-header">
                     <div class="panel-title">
                         <h2>DM Notes</h2>
-                        <p class="panel-subtitle">Private to the DM. Stored on the Beelink, never sent to players' browsers.</p>
+                        <p class="panel-subtitle">Private to the DM. Stored on the host server, never sent to players' browsers.</p>
                     </div>
                     <div class="panel-actions">
                         <button class="btn-dnd" id="btn-dm-lock" style="display:none;"><i class="fa-solid fa-lock"></i> Lock</button>
@@ -758,9 +800,9 @@
                     <textarea id="dm-notes-text" class="dm-textarea" placeholder="Secrets, NPC names, plot threads, loot to hand out...
 
 e.g.
-- Glasstaff is Iarno Albrek, a Lords' Alliance agent gone bad
-- Gundren is held at Cragmaw Castle
-- The Black Spider = Nezznar, a drow after Wave Echo Cave"></textarea>
+- Villain true identity
+- Captive location
+- Next session hooks"></textarea>
                     <div class="dm-status" id="dm-status"></div>
                 </div>
             </section>
@@ -947,7 +989,7 @@ e.g.
             <div class="modal-body">
                 <div class="form-group">
                     <label for="init-name-input">Name</label>
-                    <input type="text" id="init-name-input" placeholder="e.g., Thorin, Goblin Archer">
+                    <input type="text" id="init-name-input" placeholder="e.g., Fighter, Goblin Archer">
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -1131,13 +1173,39 @@ e.g.
                         <i class="fa-solid fa-copy"></i> Clone Current Campaign (Keep Characters)
                     </button>
                     <button class="btn-dnd" id="btn-delete-campaign-active" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3); justify-content: flex-start; text-align: left;">
-                        <i class="fa-solid fa-folder-minus"></i> Delete Current Campaign
+                        <i class="fa-solid fa-folder-minus"></i> Delete a Campaign…
                     </button>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn-dnd close-modal">Cancel</button>
                 <button class="btn-dnd btn-dnd-success" id="btn-save-campaign-settings">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete one campaign (pick which) -->
+    <div class="modal-overlay" id="modal-delete-campaign">
+        <div class="modal-card" style="width: 420px; max-width: 95%;">
+            <div class="modal-header">
+                <h3 style="color: var(--accent-red);"><i class="fa-solid fa-folder-minus"></i> Delete campaign</h3>
+                <button type="button" class="map-ctrl-btn close-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-warn">
+                    This removes <strong>only the selected campaign</strong> (its characters, map pins, and logs).
+                    Other campaigns on this game table stay. This does not delete the whole game.
+                </p>
+                <div class="form-group">
+                    <label for="delete-campaign-select">Campaign to delete</label>
+                    <select id="delete-campaign-select" class="board-select" style="margin-top:6px;"></select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-dnd close-modal">Cancel</button>
+                <button type="button" class="btn-dnd btn-dnd-danger" id="btn-delete-campaign-confirm">
+                    <i class="fa-solid fa-trash-can"></i> Delete this campaign
+                </button>
             </div>
         </div>
     </div>
