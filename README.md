@@ -107,7 +107,7 @@ Copyrighted maps are **not** in git.
 A small placeholder SVG ships at `/maps/placeholder-map.svg` for smoke tests.
 
 ### Data
-- Campaign board + games live in the Docker volume **`dnd-data`** (`DATA_DIR=/app/data`).
+- Campaign board + games live in the bind-mounted host folder **`./data-local`** → container `/app/data` (see `docker-compose.yml`). A named volume `dnd-data` is an optional portable alternative (commented in compose).
 - Survives rebuilds; wipe with `docker compose down -v` (destroys saves).
 
 ### Native Node (any OS, no Docker)
@@ -274,28 +274,27 @@ The sidebar's **Export Campaign** button downloads the whole campaign as JSON;
 ```jsonc
 {
   "campaigns": [{
-    "id": "phandelver",
-    "name": "Lost Mine of Phandelver",
-    "mapImage": "phandelver-map-exterior-player.webp",
+    "id": "sample-campaign",
+    "name": "Sample Campaign",
+    "mapImage": "",
     "characters": {
-      "Thorin": {
-        "name": "Thorin Thundershield", "player": "Chris",
-        "class": "Paladin", "subclass": "Oath of the Ancients",
-        "species": "Dwarf", "background": "Noble", "level": 3,
-        "hp": { "current": 28, "max": 28, "temp": 0 },
-        "ac": 18, "speed": "30 ft", "passivePerception": 13,
-        "initiative": "+0", "proficiencyBonus": "+2",
-        "abilities": { "STR": { "score": 16, "mod": "+3" } },
-        "saveProfs": ["WIS", "CHA"],
+      "hero1": {
+        "name": "Sample Hero", "player": "Player One",
+        "class": "Fighter", "subclass": "",
+        "species": "Human", "background": "Soldier", "level": 1,
+        "hp": { "current": 12, "max": 12, "temp": 0 },
+        "ac": 16, "speed": "30 ft", "passivePerception": 12,
+        "initiative": "+1", "proficiencyBonus": "+2",
+        "abilities": { "STR": { "score": 15, "mod": "+2" } },
+        "saveProfs": ["STR", "CON"],
         "skillProfs": { "athletics": "prof" },
         "skillMisc": {},
         "weapons": [{ "name": "Longsword", "ability": "STR",
-                      "bonus": "+5", "damage": "1d8+5 slashing" }],
-        "resources": [{ "name": "Channel Divinity", "current": 2,
-                        "max": 2, "reset": "short" }],
-        "coins": { "pp": 0, "gp": 0, "ep": 0, "sp": 0, "cp": 0 },
-        "spellcasting": { "ability": "Charisma", "saveDC": 13,
-                          "slots": { "lvl1": { "total": 3, "expended": 0 } } }
+                      "bonus": "+4", "damage": "1d8+2 slashing" }],
+        "resources": [],
+        "coins": { "pp": 0, "gp": 10, "ep": 0, "sp": 0, "cp": 0 },
+        "playerNotes": "",
+        "playerPassphrase": ""
       }
     },
     "sessionLogs": [], "mapMarkers": [], "partyPosition": {}

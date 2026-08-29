@@ -339,6 +339,8 @@ body {
     transform-origin: top left;
 }
 
+/* Full-bleed overlays on the map viewport (not the image box — image can be 0×0) */
+.map-panel-overlay,
 .map-missing-overlay {
     position: absolute;
     inset: 0;
@@ -350,11 +352,13 @@ body {
         radial-gradient(ellipse at 50% 40%, rgba(197, 160, 89, 0.08), transparent 55%),
         rgba(10, 10, 12, 0.92);
     padding: 24px;
-    min-height: 320px;
+    box-sizing: border-box;
+    overflow: auto;
 }
 
 .map-missing-card {
-    max-width: 420px;
+    max-width: 440px;
+    width: min(100%, 440px);
     text-align: center;
     background: var(--bg-card);
     border: 1px solid var(--border-gold-dim);
@@ -383,6 +387,12 @@ body {
     margin: 0 0 16px;
 }
 
+.map-overlay-note {
+    font-size: 0.82rem !important;
+    opacity: 0.9;
+    margin-top: -8px !important;
+}
+
 .map-missing-card code {
     color: var(--text-light);
     background: rgba(0, 0, 0, 0.25);
@@ -396,6 +406,7 @@ body {
     justify-content: center;
     gap: 10px;
     margin-bottom: 10px;
+    flex-wrap: wrap;
 }
 
 .map-missing-hint {
@@ -689,6 +700,52 @@ body {
 .char-backstory-full .dnd-card-title {
     position: relative;
     z-index: 1;
+}
+
+.char-backstory-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.char-backstory-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.char-tab-btn {
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    padding: 5px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border-gold-dim);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.char-tab-btn.active {
+    color: var(--bg-darker);
+    background: var(--border-gold);
+    border-color: var(--border-gold);
+}
+
+.char-player-notes-ta {
+    width: 100%;
+    min-height: 8rem;
+    margin-top: 6px;
+    background: var(--bg-darker);
+    border: 1px solid var(--border-gold-dim);
+    color: var(--text-light);
+    border-radius: 4px;
+    padding: 10px;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    resize: vertical;
 }
 
 .char-backstory-text {

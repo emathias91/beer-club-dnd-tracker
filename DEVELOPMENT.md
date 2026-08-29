@@ -185,6 +185,12 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-08-27 / dual export + player-only notes
+
+- **Export Game (DM):** `/api/export-package` requires **DM seat**; includes PIN material + DM notes. Client button gated with `canUseDestructiveAdmin()`.
+- **Export Player Copy / My Character:** `/api/export-player` — requires player character seat; **only that character’s sheet** (incl. private notes/passphrase) + shared map/game data. No other PCs, no DM notes, no PIN hashes.
+- **Character passphrase** gates `/api/seats/claim` when set (timing-safe compare). Entry screen shows “Code” badge + passphrase field. Empty passphrase = open seat until one is saved under Player Only Notes.
+
 ### 2026-08-26 / Import Game · Delete Game · export reminder
 
 - **Board:** dropdown adds **Import Game** (file picker). Restores `tableAccess` + `dmAccess` PIN hashes from v2 packages; older campaign-only JSON asks for table + DM PIN at import.

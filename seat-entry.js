@@ -588,6 +588,9 @@
                                 .join(' · ')
                         ) +
                         '</span>' +
+                        (ch.passphraseRequired
+                            ? '<span class="entry-seat-badge dm" title="Character passphrase required"><i class="fa-solid fa-key"></i> Code</span>'
+                            : '') +
                         (ch.claimed
                             ? '<span class="entry-seat-badge">In use' +
                               (ch.claimLabel ? ': ' + escapeHtml(ch.claimLabel) : '') +
@@ -617,6 +620,17 @@
             );
             if (!steal) return;
         }
+        let passphrase = ($('entry-char-passphrase') && $('entry-char-passphrase').value) || '';
+        if (ch.passphraseRequired && !passphrase) {
+            passphrase = prompt(
+                'Enter the passphrase for ' + (ch.name || 'this character') + ':',
+                ''
+            ) || '';
+            if (!passphrase) {
+                alert('This character requires a passphrase to sit.');
+                return;
+            }
+        }
         const label = prompt('Label for this device (optional):', ch.player || ch.name || '') || ch.name;
         try {
             const res = await fetch('/api/seats/claim', {
@@ -626,7 +640,8 @@
                     campaignId,
                     characterId: ch.id,
                     label,
-                    steal
+                    steal,
+                    passphrase
                 })
             });
             const data = await res.json();
@@ -635,6 +650,8 @@
                 loadEntry();
                 return;
             }
+            // Clear passphrase field after successful claim
+            if ($('entry-char-passphrase')) $('entry-char-passphrase').value = '';
             SeatSession.set({
                 sessionToken: data.sessionToken,
                 role: data.role,

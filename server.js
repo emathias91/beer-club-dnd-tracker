@@ -421,9 +421,10 @@ async function handleTableApi(req, res, urlPath, access) {
                 campaignId: p.campaignId,
                 characterId: p.characterId,
                 label: p.label,
-                steal: !!p.steal
+                steal: !!p.steal,
+                passphrase: p.passphrase
             });
-            return json(res, result.status, result.status === 200 ? result : result);
+            return json(res, result.status, result);
         }
 
         if (urlPath === '/api/seats/dm' && req.method === 'POST') {
@@ -470,10 +471,18 @@ async function handleTableApi(req, res, urlPath, access) {
             return json(res, 200, { ok: true });
         }
 
-        /* ---------- Full game export package (includes PIN hashes) ---------- */
+        /* ---------- Exports ---------- */
+        // Full DM package (PIN material + DM notes) — DM seat required
         if (urlPath === '/api/export-package' && req.method === 'GET') {
+            const seatTok = sessionToken(req, {});
+            const sess = store.getSession(seatTok);
+            if (!sess || sess.role !== 'dm') {
+                return json(res, 403, {
+                    error: 'Full game export (with PIN material and DM notes) requires a DM seat. Use Export Player Copy instead.'
+                });
+            }
             store.migrateIfNeeded();
-            const snap = store.buildSnapshot();
+            const snap = store.buildSnapshot(null, { sessionToken: seatTok });
             if (!snap) return json(res, 404, { error: 'No state initialized' });
             const meta = board.getGameMeta(access.gameId) || {};
             const tableAccess = board.readAccessRecord(access.gameId);
@@ -481,6 +490,7 @@ async function handleTableApi(req, res, urlPath, access) {
             const exportedAt = board.markGameExported(access.gameId);
             const pkg = {
                 schemaHint: 'beer-club-dnd-game-v2',
+                exportKind: 'dm_full',
                 exportedAt,
                 gameName: meta.name || access.gameId,
                 system: meta.system || 'dnd5e',
@@ -508,6 +518,22 @@ async function handleTableApi(req, res, urlPath, access) {
             return json(res, 200, pkg);
         }
 
+        // Player-only export — own character sheet + shared map/game data (no other PCs)
+        if (urlPath === '/api/export-player' && req.method === 'GET') {
+            store.migrateIfNeeded();
+            const seatTok = sessionToken(req, {});
+            const pkg = store.buildPlayerExportPayload({ sessionToken: seatTok });
+            if (!pkg) return json(res, 404, { error: 'No state initialized' });
+            if (pkg.error) {
+                return json(res, pkg.status || 403, { error: pkg.message || 'Player export failed' });
+            }
+            const meta = board.getGameMeta(access.gameId) || {};
+            pkg.gameName = meta.name || access.gameId;
+            pkg.system = meta.system || 'dnd5e';
+            pkg.systemLabel = meta.systemLabel || 'D&D';
+            return json(res, 200, pkg);
+        }
+
         if (urlPath === '/api/export-status' && req.method === 'GET') {
             const st = board.getExportStatus(access.gameId);
             return json(res, st.status, st);
@@ -531,7 +557,7 @@ async function handleTableApi(req, res, urlPath, access) {
         /* ---------- Snapshot ---------- */
         if (urlPath === '/api/snapshot' && req.method === 'GET') {
             store.migrateIfNeeded();
-            const snap = store.buildSnapshot();
+            const snap = store.buildSnapshot(null, { sessionToken: sessionToken(req, {}) });
             if (!snap) return json(res, 404, { error: 'No state initialized' });
             return json(res, 200, snap);
         }
@@ -633,7 +659,7 @@ async function handleTableApi(req, res, urlPath, access) {
         if (urlPath === '/api/state') {
             if (req.method === 'GET') {
                 store.migrateIfNeeded();
-                const snap = store.buildSnapshot();
+                const snap = store.buildSnapshot(null, { sessionToken: sessionToken(req, {}) });
                 if (!snap) {
                     return fs.readFile(dbPath(), 'utf8', (err, data) => {
                         if (err) {
