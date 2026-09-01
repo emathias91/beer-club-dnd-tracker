@@ -78,15 +78,6 @@
         return document.getElementById(id);
     }
 
-    function showBoard() {
-        const board = $('board-screen');
-        const entry = $('entry-screen');
-        const app = document.querySelector('.app-container');
-        if (board) board.style.display = 'flex';
-        if (entry) entry.style.display = 'none';
-        if (app) app.style.display = 'none';
-    }
-
     function showEntry() {
         const board = $('board-screen');
         const entry = $('entry-screen');
@@ -94,6 +85,7 @@
         if (board) board.style.display = 'none';
         if (entry) entry.style.display = 'flex';
         if (app) app.style.display = 'none';
+        startEntrySeatPoll();
     }
 
     function showApp() {
@@ -103,6 +95,17 @@
         if (board) board.style.display = 'none';
         if (entry) entry.style.display = 'none';
         if (app) app.style.display = 'flex';
+        stopEntrySeatPoll();
+    }
+
+    function showBoard() {
+        const board = $('board-screen');
+        const entry = $('entry-screen');
+        const app = document.querySelector('.app-container');
+        if (board) board.style.display = 'flex';
+        if (entry) entry.style.display = 'none';
+        if (app) app.style.display = 'none';
+        stopEntrySeatPoll();
     }
 
     function escapeHtml(s) {
@@ -610,18 +613,9 @@
     }
 
     async function claimCharacter(campaignId, ch, alreadyClaimed) {
-        let steal = false;
-        if (alreadyClaimed) {
-            steal = confirm(
-                (ch.name || 'Character') +
-                    ' is marked in use' +
-                    (ch.claimLabel ? ' by ' + ch.claimLabel : '') +
-                    '.\n\nTake over this seat? The other device will lose the claim.'
-            );
-            if (!steal) return;
-        }
-        let passphrase = ($('entry-char-passphrase') && $('entry-char-passphrase').value) || '';
-        if (ch.passphraseRequired && !passphrase) {
+        // Passphrase only when this seat has a Code — prompt on click (no global entry field).
+        let passphrase = '';
+        if (ch.passphraseRequired) {
             passphrase = prompt(
                 'Enter the passphrase for ' + (ch.name || 'this character') + ':',
                 ''
@@ -632,7 +626,8 @@
             }
         }
         const label = prompt('Label for this device (optional):', ch.player || ch.name || '') || ch.name;
-        try {
+
+        async function tryClaim(steal, pass) {
             const res = await fetch('/api/seats/claim', {
                 method: 'POST',
                 headers: GameAccess.headers(),
@@ -640,18 +635,66 @@
                     campaignId,
                     characterId: ch.id,
                     label,
-                    steal,
-                    passphrase
+                    steal: !!steal,
+                    passphrase: pass || ''
                 })
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
+            return { res, data };
+        }
+
+        // Prefer server truth: try free claim first (unless UI already shows in-use).
+        let steal = false;
+        if (alreadyClaimed) {
+            steal = confirm(
+                (ch.name || 'Character') +
+                    ' is marked in use' +
+                    (ch.claimLabel ? ' by ' + ch.claimLabel : '') +
+                    '.\n\nTake over this seat? The other device will be logged out of the seat.'
+            );
+            if (!steal) return;
+        }
+
+        try {
+            let { res, data } = await tryClaim(steal, passphrase);
+
+            // Wrong / missing code — one retry prompt
+            if (res.status === 401 && data && data.needsPassphrase) {
+                passphrase = prompt(
+                    (data.error || 'Incorrect passphrase.') +
+                        '\n\nEnter the passphrase for ' +
+                        (ch.name || 'this character') +
+                        ':',
+                    ''
+                ) || '';
+                if (!passphrase) {
+                    loadEntry();
+                    return;
+                }
+                ({ res, data } = await tryClaim(steal, passphrase));
+            }
+
+            // Ethan #3: stale free list → server 409; offer takeover from response (not inverted UI).
+            if (res.status === 409 && data && (data.canSteal || data.reason === 'seat_claimed')) {
+                const who = (data.claim && data.claim.label) || ch.claimLabel || 'another device';
+                const ok = confirm(
+                    (ch.name || 'Character') +
+                        ' is already claimed by ' +
+                        who +
+                        '.\n\nTake over this seat? The other device will lose access.'
+                );
+                if (!ok) {
+                    loadEntry();
+                    return;
+                }
+                ({ res, data } = await tryClaim(true, passphrase));
+            }
+
             if (!res.ok) {
                 alert(data.error || 'Could not claim seat');
                 loadEntry();
                 return;
             }
-            // Clear passphrase field after successful claim
-            if ($('entry-char-passphrase')) $('entry-char-passphrase').value = '';
             SeatSession.set({
                 sessionToken: data.sessionToken,
                 role: data.role,
@@ -670,10 +713,8 @@
         const pinBox = $('entry-dm-pin');
         const pin = pinBox ? pinBox.value : '';
         const label = ($('entry-dm-label') && $('entry-dm-label').value) || 'DM';
-        if (!pin || pin.length < 4) {
-            alert('Enter the DM PIN (set when the game was created).');
-            return;
-        }
+        // PIN required when configured; server allows empty PIN only to bootstrap
+        // a DM seat on tables that still need DM Notes PIN setup.
         try {
             const res = await fetch('/api/seats/dm', {
                 method: 'POST',
@@ -682,6 +723,10 @@
             });
             const data = await res.json();
             if (!res.ok) {
+                if (res.status === 400 && (!pin || pin.length < 4)) {
+                    alert('Enter the DM PIN (set when the game was created).');
+                    return;
+                }
                 alert(data.error || 'DM login failed');
                 return;
             }
@@ -693,6 +738,14 @@
                 label: data.label
             });
             await enterApp();
+            if (data.needsDmPinSetup) {
+                // Open DM Notes so the DM can set the PIN (API is DM-seat gated).
+                try {
+                    const nav = document.getElementById('nav-dm-notes');
+                    if (nav) nav.click();
+                } catch (e2) { /* ignore */ }
+                alert('DM seat OK. Set a DM Notes PIN on the DM Notes panel (required before notes unlock).');
+            }
         } catch (e) {
             alert('Network error');
             console.error(e);
@@ -708,6 +761,64 @@
     }
 
     let heartbeatTimer = null;
+    let entrySeatPollTimer = null;
+    let _seatLossHandled = false;
+
+    function startEntrySeatPoll() {
+        if (entrySeatPollTimer) clearInterval(entrySeatPollTimer);
+        entrySeatPollTimer = setInterval(() => {
+            if (!GameAccess.token()) return;
+            const entry = $('entry-screen');
+            if (!entry || entry.style.display === 'none') return;
+            loadEntry();
+        }, 5000);
+    }
+
+    function stopEntrySeatPoll() {
+        if (entrySeatPollTimer) {
+            clearInterval(entrySeatPollTimer);
+            entrySeatPollTimer = null;
+        }
+    }
+
+    /**
+     * Loser of a seat takeover: clear session and return to seat select.
+     * Exposed for app.js snapshot/write paths.
+     */
+    window.handleSeatTaken = async function handleSeatTaken(message) {
+        if (_seatLossHandled) return;
+        _seatLossHandled = true;
+        try {
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+            SeatSession.clear();
+            const msg =
+                message ||
+                'Your seat was taken by another device. You are no longer logged in on this seat.';
+            try {
+                alert(msg);
+            } catch (e) { /* ignore */ }
+            if (GameAccess.token()) {
+                showEntry();
+                await loadEntry();
+            } else {
+                showBoard();
+                await loadBoard();
+            }
+            setSyncStatusSafe('Seat lost', 'err');
+        } finally {
+            setTimeout(() => {
+                _seatLossHandled = false;
+            }, 2000);
+        }
+    };
+
+    function setSyncStatusSafe(text, kind) {
+        try {
+            if (typeof window.setSyncStatus === 'function') window.setSyncStatus(text, kind);
+        } catch (e) { /* ignore */ }
+    }
+
     function startHeartbeat() {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         heartbeatTimer = setInterval(async () => {
@@ -719,13 +830,26 @@
                     headers: SeatSession.headers(),
                     body: JSON.stringify({})
                 });
+                const data = await res.json().catch(() => ({}));
+                if (res.status === 409 && (data.reason === 'seat_taken' || data.reason === 'seat_gone')) {
+                    await window.handleSeatTaken(data.error);
+                    return;
+                }
+                // Session wiped after steal notify, or expired — if we still had a player seat, treat as lost seat.
                 if (res.status === 401) {
+                    const seat = SeatSession.get();
+                    if (seat && seat.role === 'player') {
+                        await window.handleSeatTaken(
+                            'Your seat session ended. You may need to sit again.'
+                        );
+                        return;
+                    }
                     await leaveGameFully();
                 }
             } catch (e) {
                 /* ignore */
             }
-        }, 30000);
+        }, 10000);
     }
 
     async function leaveSeat() {
@@ -846,11 +970,6 @@
                 if (res.ok) {
                     showEntry();
                     await loadEntry();
-                    setInterval(() => {
-                        if (GameAccess.token() && $('entry-screen') && $('entry-screen').style.display !== 'none') {
-                            loadEntry();
-                        }
-                    }, 8000);
                     return;
                 }
             } catch (e) {

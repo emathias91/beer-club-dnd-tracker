@@ -185,6 +185,50 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-08-30 / combat turn + session delete DM-only
+
+- **Combat Turn Tracker:** **Next Turn**, **Reset Tracker**, **Add Combatant**, and **per-row Remove (delete combatant)** are **DM seat only** (hidden for players; handlers also guarded).
+- **Reset Tracker:** drops NPC/monster rows, sets round/turn/init, and **re-adds every party character** from sheets (`ensureAllPartyOnTracker`).
+- **Add Combatant:** quick-click list of party members **not already** on the tracker; custom NPC form remains. **Initiative optional** (blank OK). **HP optional** → shows **`??`** when unknown.
+- **Session Logs:** **Delete Log** is DM-only (hidden + guarded). Edit/write still available as before.
+- Players can still view the tracker and edit row HP/init if present; table flow controls are DM.
+
+### 2026-08-30 / campaign CRUD + location note delete DM-only
+
+- **Add Campaign / Delete Campaign** (map header) and **Start campaign** (empty table): **DM seat only** — hidden for players; create/delete/clone handlers guarded with `requireDmAction`.
+- **Campaign Settings** create / clone / delete buttons: DM-only visibility.
+- **Location pin Description & Notes → Delete**: DM-only (hidden for players; handler guarded). Edit remains available.
+
+### 2026-08-30 / session log: Edit DM-only, Add to Log for party
+
+- **Write New Log** / **Edit Log** / **Delete Log**: **DM only** (hidden + `requireDmAction` on open/save).
+- **Add to Log** (players + DM): append signed note to selected session; stored in `log.additions[]` as `{ id, at, by, text }` — Edit Log does **not** wipe additions.
+- Detail view shows main DM notes + **Party additions** with name + timestamp.
+- Chrome: `updateSessionLogChrome()` from `updateCombatAndSessionChrome()`.
+
+### 2026-08-30 / map upload DM-only + blank map copy
+
+- **POST `/api/maps/upload`:** requires **DM seat** (403 otherwise). Game token alone is not enough.
+- **PUT `/api/meta/:id`:** changing `mapImage` requires DM seat.
+- **UI:** Browse / change-map hidden for players; blank overlay title **No map uploaded**; players see *Only the DM can upload a campaign map.* Seat-entry empty map copy matches.
+- Campaign Settings map path field read-only for non-DM; settings save does not overwrite `mapImage` as player.
+
+### 2026-08-29 / seat takeover revoke + notify (Ethan #3)
+
+- **claimSeat:** on take-over, **revoke** previous session token so the loser cannot keep writing.
+- **heartbeat:** if claim is held by another session → **409** `reason: seat_taken` and drop loser session.
+- **putCharacter:** refuse stale “own seat” reclaim when claim is another session (`seat_taken`).
+- **409 claim:** returns `canSteal: true` + claim label (no sessionId leak); entry UI offers takeover from **server** 409 (not only stale free-list flag).
+- **Entry seat list** polls every **5s** while seat select is open.
+- **In-app:** snapshot claims + 10s heartbeat surface “seat taken” → return to seat select.
+
+### 2026-08-29 / DM Notes require DM seat (Ethan #2)
+
+- All `/api/dm-notes/*` (status, setup, unlock, save, change-pin) require a valid **DM seat** session (`role === 'dm'`), then the notes PIN as before.
+- Player seats: DM Notes nav/panel **hidden**; API returns **403**.
+- Unconfigured notes PIN: `POST /api/seats/dm` grants a **bootstrap DM seat** (`needsDmPinSetup`) so only a DM can run setup (no player race on setup).
+- Normal games (PIN set at New Game): Enter as DM still needs the DM PIN.
+
 ### 2026-08-27 / dual export + player-only notes
 
 - **Export Game (DM):** `/api/export-package` requires **DM seat**; includes PIN material + DM notes. Client button gated with `canUseDestructiveAdmin()`.

@@ -91,10 +91,7 @@
                 <h1 id="entry-campaign-name">Campaign</h1>
                 <p class="entry-sub">Choose your seat to join the table</p>
             </div>
-            <label class="entry-label" for="entry-char-passphrase">Character passphrase
-                <input type="password" id="entry-char-passphrase" placeholder="Required if that character has a code set" autocomplete="current-password">
-            </label>
-            <p class="entry-hint">If a character shows a lock, enter their passphrase here, then click their seat.</p>
+            <p class="entry-hint">Seats with a <strong>Code</strong> badge ask for that character’s passphrase when you click them.</p>
             <div id="entry-character-list" class="entry-character-list"></div>
             <div class="entry-dm-block">
                 <h2><i class="fa-solid fa-dungeon"></i> Dungeon Master</h2>
@@ -120,8 +117,8 @@
                 <img id="entry-map-image" class="entry-map-image" src="" alt="Campaign map">
                 <div id="entry-map-empty" class="entry-map-empty" style="display:none;">
                     <i class="fa-solid fa-map"></i>
-                    <p>No map yet</p>
-                    <p class="entry-hint">Blank tables start empty — set a map in Campaign Settings or import a save.</p>
+                    <p>No map uploaded</p>
+                    <p class="entry-hint">Only the DM can upload a campaign map.</p>
                 </div>
             </div>
         </div>
@@ -168,7 +165,7 @@
                 <li class="nav-item" data-target="panel-rules">
                     <span class="nav-link"><i class="fa-solid fa-scroll"></i>Rules Reference</span>
                 </li>
-                <li class="nav-item" data-target="panel-dm">
+                <li class="nav-item" data-target="panel-dm" id="nav-dm-notes">
                     <span class="nav-link"><i class="fa-solid fa-lock"></i>DM Notes</span>
                 </li>
             </nav>
@@ -241,6 +238,9 @@
                                 <p class="map-overlay-note">
                                     The first campaign is named after your game automatically. You can rename it later in Campaign Settings.
                                 </p>
+                                <p class="map-overlay-note" id="empty-campaigns-dm-note" style="display:none;">
+                                    Only the DM can start or add campaigns on this table.
+                                </p>
                                 <div class="map-missing-actions">
                                     <button type="button" class="btn-dnd btn-dnd-primary" id="btn-create-campaign-empty">
                                         <i class="fa-solid fa-play"></i> Start campaign
@@ -252,9 +252,9 @@
                         <div class="map-panel-overlay" id="map-missing-overlay" style="display:none;" aria-live="polite">
                             <div class="map-missing-card">
                                 <i class="fa-solid fa-map-location-dot"></i>
-                                <h3>No campaign map loaded</h3>
-                                <p>Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.</p>
-                                <div class="map-missing-actions">
+                                <h3 id="map-missing-title">No map uploaded</h3>
+                                <p id="map-missing-body">Only the DM can upload a campaign map.</p>
+                                <div class="map-missing-actions" id="map-missing-actions">
                                     <button type="button" class="btn-dnd btn-dnd-primary" id="btn-browse-map">
                                         <i class="fa-solid fa-folder-open"></i> Browse for map…
                                     </button>
@@ -615,6 +615,7 @@
                             </div>
                             <button class="btn-dnd btn-dnd-primary" id="btn-add-combatant-modal"><i class="fa-solid fa-user-plus"></i> Add Combatant</button>
                         </div>
+                        <p id="combat-dm-tools-hint" class="entry-hint" style="display:none; margin: 8px 0 0;"></p>
 
                         <div class="init-list" id="combat-init-list">
                             <!-- Initiative rows dynamically rendered -->
@@ -633,10 +634,10 @@
                 <div class="panel-header">
                     <div class="panel-title">
                         <h2>Session Log Tracker</h2>
-                        <p>Write, edit, and keep notes of the party's adventures across the Phandelver campaign.</p>
+                        <p>Party session notes. The DM writes and edits full logs; everyone can add their own entries.</p>
                     </div>
                     <div class="panel-actions">
-                        <button class="btn-dnd btn-dnd-primary" id="btn-new-log-modal">
+                        <button class="btn-dnd btn-dnd-primary" id="btn-new-log-modal" title="DM: create a new session log">
                             <i class="fa-solid fa-file-signature"></i> Write New Log
                         </button>
                     </div>
@@ -657,13 +658,20 @@
                         <div class="session-detail-body">
                             <p id="session-detail-summary" style="font-size: 0.95rem; font-weight: 600; color: var(--border-gold); margin-bottom: 15px; border-left: 2px solid var(--border-gold); padding-left: 10px;"></p>
                             <div class="session-detail-content" id="session-detail-content">
-                                Click on a session log from the left sidebar to view DM and player notes.
+                                Click on a session log from the left sidebar to view notes and party additions.
                             </div>
                         </div>
 
-                        <div class="session-actions" id="session-detail-actions" style="margin-top: 15px; display: none; gap: 8px;">
-                            <button class="btn-dnd" id="btn-edit-session"><i class="fa-solid fa-file-pen"></i> Edit Log</button>
-                            <button class="btn-dnd" id="btn-delete-session" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3);"><i class="fa-solid fa-trash-can"></i> Delete Log</button>
+                        <div class="session-actions" id="session-detail-actions" style="margin-top: 15px; display: none; gap: 8px; flex-wrap: wrap;">
+                            <button class="btn-dnd btn-dnd-primary" id="btn-add-to-session" title="Append your note to this session log">
+                                <i class="fa-solid fa-comment-medical"></i> Add to Log
+                            </button>
+                            <button class="btn-dnd" id="btn-edit-session" title="DM: edit title, date, summary, and main notes">
+                                <i class="fa-solid fa-file-pen"></i> Edit Log
+                            </button>
+                            <button class="btn-dnd" id="btn-delete-session" style="color: var(--accent-red); border-color: rgba(166,38,38,0.3);" title="DM: delete this session log">
+                                <i class="fa-solid fa-trash-can"></i> Delete Log
+                            </button>
                         </div>
                     </div>
 
@@ -761,7 +769,7 @@
                 <div class="panel-header">
                     <div class="panel-title">
                         <h2>DM Notes</h2>
-                        <p class="panel-subtitle">Private to the DM. Stored on the host server, never sent to players' browsers.</p>
+                        <p class="panel-subtitle">Private to the DM seat. Host server only — PIN unlock plus DM seat required.</p>
                     </div>
                     <div class="panel-actions">
                         <button class="btn-dnd" id="btn-dm-lock" style="display:none;"><i class="fa-solid fa-lock"></i> Lock</button>
@@ -981,25 +989,27 @@ e.g.
 
     <!-- Add Combatant Modal -->
     <div class="modal-overlay" id="modal-add-combatant">
-        <div class="modal-card" style="width: 400px;">
+        <div class="modal-card" style="width: 440px;">
             <div class="modal-header">
                 <h3>Add Combatant</h3>
                 <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body">
-                <div class="form-group">
-                    <label for="init-name-input">Name</label>
-                    <input type="text" id="init-name-input" placeholder="e.g., Fighter, Goblin Archer">
+                <div id="combat-party-quick-add" class="combat-party-quick-add" aria-live="polite"></div>
+
+                <div class="form-group" style="margin-top: 12px;">
+                    <label for="init-name-input">Name (custom / NPC)</label>
+                    <input type="text" id="init-name-input" placeholder="e.g., Goblin Archer, Guard">
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                     <div class="form-group">
-                        <label for="init-score-input">Initiative Roll</label>
-                        <input type="number" id="init-score-input" placeholder="e.g., 15">
+                        <label for="init-score-input">Initiative Roll <span style="text-transform:none; font-weight:normal; opacity:.75;">(optional)</span></label>
+                        <input type="number" id="init-score-input" placeholder="Leave blank">
                     </div>
                     <div class="form-group">
-                        <label for="init-hp-input">HP (optional)</label>
-                        <input type="number" id="init-hp-input" placeholder="e.g., 20">
+                        <label for="init-hp-input">HP <span style="text-transform:none; font-weight:normal; opacity:.75;">(optional → ??)</span></label>
+                        <input type="number" id="init-hp-input" placeholder="Blank = ??">
                     </div>
                 </div>
 
@@ -1085,7 +1095,7 @@ e.g.
         </div>
     </div>
 
-    <!-- Write / Edit Session Log Modal -->
+    <!-- Write / Edit Session Log Modal (DM) -->
     <div class="modal-overlay" id="modal-session-log">
         <div class="modal-card" style="width: 700px; max-width: 95%;">
             <div class="modal-header">
@@ -1112,13 +1122,40 @@ e.g.
                 </div>
 
                 <div class="form-group">
-                    <label for="session-content-input">Full Session Notes (DM & Player Notes)</label>
-                    <textarea id="session-content-input" rows="12" placeholder="Write session notes, loot found, enemies killed, and next steps..."></textarea>
+                    <label for="session-content-input">Main Session Notes (DM)</label>
+                    <textarea id="session-content-input" rows="12" placeholder="Write the main session notes. Party members add their own entries with Add to Log."></textarea>
                 </div>
+                <p class="entry-hint" id="session-edit-additions-hint" style="margin:0;">
+                    Party “Add to Log” entries stay attached and are not overwritten by Edit Log.
+                </p>
             </div>
             <div class="modal-footer">
                 <button class="btn-dnd close-modal">Cancel</button>
                 <button class="btn-dnd btn-dnd-success" id="btn-save-session">Save Log</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add to Session Log (players + DM append) -->
+    <div class="modal-overlay" id="modal-session-add">
+        <div class="modal-card" style="width: 520px; max-width: 95%;">
+            <div class="modal-header">
+                <h3>Add to Session Log</h3>
+                <button class="map-ctrl-btn close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="session-add-log-id">
+                <p class="entry-hint" id="session-add-attribution" style="margin: 0 0 10px;">
+                    Your entry will be signed with your seat name.
+                </p>
+                <div class="form-group">
+                    <label for="session-add-text">Your note</label>
+                    <textarea id="session-add-text" rows="8" placeholder="What happened from your point of view, loot, reminders…"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-dnd close-modal">Cancel</button>
+                <button class="btn-dnd btn-dnd-success" id="btn-save-session-add">Add to Log</button>
             </div>
         </div>
     </div>

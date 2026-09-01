@@ -392,6 +392,25 @@ function applyServerSnapshot(fetchedState) {
     state.zoomLevel = keepZoom;
     // Seat only sets the default tab at boot (applySeatFocus). Players may view other sheets
     // without losing their seat; poll must not yank the tab back.
+    checkSeatClaimStillMine();
+}
+
+/** Ethan #3: if snapshot claims show another session holds our PC, kick to entry. */
+function checkSeatClaimStillMine() {
+    if (!window.SeatSession || typeof SeatSession.get !== 'function') return;
+    const seat = SeatSession.get();
+    if (!seat || seat.role !== 'player' || !seat.characterId || !seat.sessionToken) return;
+    const claim = state.claims && state.claims[seat.characterId];
+    if (!claim || !claim.sessionId) return; // expired / free — heartbeat will handle
+    if (claim.sessionId !== seat.sessionToken) {
+        if (typeof window.handleSeatTaken === 'function') {
+            window.handleSeatTaken(
+                'Your seat was taken by another device' +
+                    (claim.label ? ' (' + claim.label + ')' : '') +
+                    '. You are no longer logged in on this seat.'
+            );
+        }
+    }
 }
 
 async function loadState() {
@@ -1033,6 +1052,7 @@ function startPollingSync() {
                     state.dmEditLocks = fetchedState.dmEditLocks || fetchedState.locks || state.dmEditLocks;
                     state.claims = fetchedState.claims || {};
                     processSeatNotices();
+                    checkSeatClaimStillMine();
                     setSyncStatus('Live', 'ok');
                 }
             } else if (response.status === 401) {
@@ -1076,16 +1096,176 @@ function resetToDefaults(opts) {
 }
 
 function initDefaultCombatants(chars) {
-    return Object.keys(chars).map(key => {
-        const c = chars[key];
+    return Object.keys(chars || {}).map(key => {
+        const c = chars[key] || {};
+        const hpObj = c.hp && typeof c.hp === 'object' ? c.hp : null;
+        let hp = null;
+        let maxHp = null;
+        if (hpObj) {
+            if (typeof hpObj.current === 'number') hp = hpObj.current;
+            if (typeof hpObj.max === 'number') maxHp = hpObj.max;
+            if (hp == null && maxHp != null) hp = maxHp;
+        } else if (typeof c.hp === 'number') {
+            hp = c.hp;
+            maxHp = c.hp;
+        }
         return {
-            name: c.name,
+            name: c.name || key,
+            characterId: key,
             initiative: 0,
-            hp: c.hp.current || c.hp.max || 20,
-            maxHp: c.hp.max || 20,
+            hp,
+            maxHp,
             isMonster: false
         };
     });
+}
+
+/** Party PCs for combat tracker helpers. */
+function partyCharactersForCombat() {
+    const active = getActiveCampaign();
+    if (!active || !active.characters) return [];
+    return Object.keys(active.characters).map(id => {
+        const c = active.characters[id] || {};
+        const hpObj = c.hp && typeof c.hp === 'object' ? c.hp : null;
+        let hp = null;
+        let maxHp = null;
+        if (hpObj) {
+            if (typeof hpObj.current === 'number') hp = hpObj.current;
+            if (typeof hpObj.max === 'number') maxHp = hpObj.max;
+            if (hp == null && maxHp != null) hp = maxHp;
+        } else if (typeof c.hp === 'number') {
+            hp = c.hp;
+            maxHp = c.hp;
+        }
+        return {
+            id,
+            name: String(c.name || id || 'Character').trim(),
+            hp,
+            maxHp
+        };
+    }).filter(p => p.name);
+}
+
+function combatantMatchesParty(cb, charId, name) {
+    if (!cb || cb.isMonster) return false;
+    if (charId && cb.characterId && String(cb.characterId) === String(charId)) return true;
+    const n = String(name || '').trim().toLowerCase();
+    const cn = String(cb.name || '').trim().toLowerCase();
+    return !!(n && cn && n === cn);
+}
+
+function isPartyMemberInCombat(charId, name) {
+    return (state.combatants || []).some(cb => combatantMatchesParty(cb, charId, name));
+}
+
+/** Parse optional number fields; blank / ?? → null. */
+function parseOptionalCombatNumber(raw) {
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    if (!s || s === '??' || s === '?' || s.toLowerCase() === 'unknown') return null;
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) ? n : null;
+}
+
+function formatCombatHpDisplay(v) {
+    return (v == null || v === '') ? '??' : String(v);
+}
+
+function combatInitSortValue(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function buildCombatantFromParty(p, opts) {
+    const initiative = opts && Object.prototype.hasOwnProperty.call(opts, 'initiative')
+        ? opts.initiative
+        : null;
+    return {
+        name: p.name,
+        characterId: p.id,
+        initiative: initiative == null || initiative === '' ? null : combatInitSortValue(initiative),
+        hp: p.hp == null ? null : p.hp,
+        maxHp: p.maxHp == null ? null : p.maxHp,
+        isMonster: false
+    };
+}
+
+/**
+ * Ensure every party character is on the tracker.
+ * @param {{ zeroInit?: boolean, refreshHpFromSheet?: boolean }} opts
+ */
+function ensureAllPartyOnTracker(opts) {
+    opts = opts || {};
+    if (!Array.isArray(state.combatants)) state.combatants = [];
+    const party = partyCharactersForCombat();
+    party.forEach(p => {
+        const existing = state.combatants.find(cb => combatantMatchesParty(cb, p.id, p.name));
+        if (existing) {
+            if (!existing.characterId) existing.characterId = p.id;
+            if (existing.name !== p.name && p.name) existing.name = p.name;
+            if (opts.refreshHpFromSheet) {
+                existing.hp = p.hp == null ? null : p.hp;
+                existing.maxHp = p.maxHp == null ? null : p.maxHp;
+            }
+            if (opts.zeroInit) existing.initiative = 0;
+        } else {
+            const row = buildCombatantFromParty(p, {
+                initiative: opts.zeroInit ? 0 : null
+            });
+            state.combatants.push(row);
+        }
+    });
+}
+
+function renderPartyQuickAddList() {
+    const host = document.getElementById('combat-party-quick-add');
+    if (!host) return;
+    const missing = partyCharactersForCombat().filter(p => !isPartyMemberInCombat(p.id, p.name));
+    if (!missing.length) {
+        const partyCount = partyCharactersForCombat().length;
+        host.innerHTML = partyCount
+            ? '<p class="entry-hint" style="margin:0;">All party characters are already on the tracker.</p>'
+            : '<p class="entry-hint" style="margin:0;">No party characters in this campaign yet.</p>';
+        return;
+    }
+    host.innerHTML =
+        '<p class="entry-hint" style="margin:0 0 8px;">Party not on tracker — click to add (init optional; HP from sheet):</p>' +
+        '<div class="combat-party-quick-btns"></div>';
+    const wrap = host.querySelector('.combat-party-quick-btns');
+    missing.forEach(p => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-dnd combat-party-quick-btn';
+        const hpLabel = (p.hp != null || p.maxHp != null)
+            ? ('HP ' + formatCombatHpDisplay(p.hp) + (p.maxHp != null ? '/' + formatCombatHpDisplay(p.maxHp) : ''))
+            : 'HP ??';
+        btn.innerHTML =
+            '<i class="fa-solid fa-user-plus"></i> ' +
+            escapeHtml(p.name) +
+            ' <span class="combat-party-quick-meta">(' + escapeHtml(hpLabel) + ')</span>';
+        btn.addEventListener('click', () => {
+            if (!requireDmAction('add combatants')) return;
+            if (isPartyMemberInCombat(p.id, p.name)) {
+                renderPartyQuickAddList();
+                return;
+            }
+            state.combatants.push(buildCombatantFromParty(p, { initiative: null }));
+            renderInitiativeList();
+            saveCombatNow();
+            renderPartyQuickAddList();
+        });
+        wrap.appendChild(btn);
+    });
+}
+
+function openAddCombatantModal() {
+    if (!requireDmAction('add combatants')) return;
+    document.getElementById('init-name-input').value = '';
+    document.getElementById('init-score-input').value = '';
+    document.getElementById('init-hp-input').value = '';
+    document.getElementById('init-is-monster').checked = false;
+    renderPartyQuickAddList();
+    document.getElementById('modal-add-combatant').style.display = 'flex';
 }
 
 // ----------------------------------------------------
@@ -1145,6 +1325,45 @@ function showMapMissing(show, message) {
     if (overlay) overlay.style.display = show ? 'flex' : 'none';
     if (img) img.style.visibility = show ? 'hidden' : 'visible';
     if (status && message != null) status.textContent = message;
+    if (show) updateMapUploadChrome();
+}
+
+/** DM can upload / change map; players see read-only blank copy. */
+function updateMapUploadChrome() {
+    const isDm = canUseDestructiveAdmin();
+    const title = document.getElementById('map-missing-title');
+    const body = document.getElementById('map-missing-body');
+    const actions = document.getElementById('map-missing-actions');
+    const browseBtn = document.getElementById('btn-browse-map');
+    const changeBtn = document.getElementById('map-change-image');
+    const mapInput = document.getElementById('campaign-map-input');
+    const mapInputLabel = mapInput && mapInput.closest('label');
+
+    if (title) title.textContent = 'No map uploaded';
+    if (body) {
+        body.innerHTML = isDm
+            ? 'Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.'
+            : 'No map uploaded. Only the DM can upload a campaign map.';
+    }
+    if (actions) actions.style.display = isDm ? '' : 'none';
+    if (browseBtn) {
+        browseBtn.style.display = isDm ? '' : 'none';
+        browseBtn.disabled = !isDm;
+        browseBtn.title = isDm ? 'Upload a campaign map image' : 'Only the DM can upload a map';
+    }
+    if (changeBtn) {
+        changeBtn.style.display = isDm ? '' : 'none';
+        changeBtn.disabled = !isDm;
+        changeBtn.title = isDm ? 'Change map image' : 'Only the DM can change the map';
+    }
+    if (mapInput) {
+        mapInput.disabled = !isDm;
+        mapInput.readOnly = !isDm;
+        mapInput.title = isDm
+            ? 'Map path or /maps/… URL'
+            : 'Only the DM can set the campaign map';
+        if (mapInputLabel) mapInputLabel.style.opacity = isDm ? '' : '0.65';
+    }
 }
 
 function bindMapImageLifecycle(mapImg) {
@@ -1162,6 +1381,9 @@ function bindMapImageLifecycle(mapImg) {
 
 async function uploadMapFile(file) {
     if (!file) return null;
+    if (!canUseDestructiveAdmin()) {
+        throw new Error('Only the DM can upload a campaign map.');
+    }
     const status = document.getElementById('map-missing-status');
     if (status) status.textContent = 'Uploading ' + file.name + '…';
     const buf = await file.arrayBuffer();
@@ -1230,10 +1452,17 @@ function initMapPanel() {
         applyZoom();
     });
 
+    const openMapPicker = () => {
+        if (!canUseDestructiveAdmin()) {
+            alert('Only the DM can upload a campaign map.');
+            return;
+        }
+        openMapFilePicker();
+    };
     const changeBtn = document.getElementById('map-change-image');
-    if (changeBtn) changeBtn.addEventListener('click', openMapFilePicker);
+    if (changeBtn) changeBtn.addEventListener('click', openMapPicker);
     const browseBtn = document.getElementById('btn-browse-map');
-    if (browseBtn) browseBtn.addEventListener('click', openMapFilePicker);
+    if (browseBtn) browseBtn.addEventListener('click', openMapPicker);
     const fileInput = document.getElementById('map-file-input');
     if (fileInput) {
         fileInput.addEventListener('change', async () => {
@@ -1388,7 +1617,7 @@ function renderMapMarkers() {
     const url = resolveCampaignMapUrl(active.mapImage);
     if (!url) {
         mapImg.removeAttribute('src');
-        showMapMissing(true, 'No map configured for this campaign.');
+        showMapMissing(true, '');
     } else {
         // Bust cache when switching maps
         const bust = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(url);
@@ -1432,10 +1661,12 @@ function showMarkerDetails(marker) {
     const active = getActiveCampaign();
     const placeholder = document.getElementById('marker-details-placeholder');
     const content = document.getElementById('marker-content');
+    const delBtn = document.getElementById('btn-delete-marker');
     
     if (!marker) {
         placeholder.style.display = 'flex';
         content.style.display = 'none';
+        if (delBtn) delBtn.style.display = 'none';
         return;
     }
     
@@ -1449,19 +1680,28 @@ function showMarkerDetails(marker) {
     badge.innerText = marker.type || 'town';
     badge.className = `marker-badge ${marker.type || 'town'}`;
     
-    // Edit & delete handlers
+    // Edit stays available; Delete description/notes is DM-only
     document.getElementById('btn-edit-marker').onclick = () => {
         openEditMarkerModal(marker);
     };
     
-    document.getElementById('btn-delete-marker').onclick = () => {
-        if (confirm(`Are you sure you want to delete the marker for ${marker.name}?`)) {
-            active.mapMarkers = active.mapMarkers.filter(m => m.id !== marker.id);
-            saveState();
-            renderMapMarkers();
-            showMarkerDetails(null);
-        }
-    };
+    const isDm = canUseDestructiveAdmin();
+    if (delBtn) {
+        delBtn.style.display = isDm ? 'inline-flex' : 'none';
+        delBtn.title = isDm
+            ? 'Delete this location pin and its notes'
+            : 'Only the DM can delete location notes';
+        delBtn.onclick = () => {
+            if (!requireDmAction('delete location notes')) return;
+            if (confirm(`Are you sure you want to delete the marker for ${marker.name}?`)) {
+                if (!active) return;
+                active.mapMarkers = (active.mapMarkers || []).filter(m => m.id !== marker.id);
+                saveState();
+                renderMapMarkers();
+                showMarkerDetails(null);
+            }
+        };
+    }
 }
 
 function showPartyDetails() {
@@ -1484,13 +1724,12 @@ function showPartyDetails() {
         document.getElementById('modal-party-location').style.display = 'flex';
     };
     
-    document.getElementById('btn-delete-marker').style.display = 'none';
-    
-    const oldShowMarkerDetails = showMarkerDetails;
-    showMarkerDetails = (m) => {
-        document.getElementById('btn-delete-marker').style.display = m ? 'inline-flex' : 'none';
-        oldShowMarkerDetails(m);
-    };
+    // Party token is not a deletable location note
+    const delBtn = document.getElementById('btn-delete-marker');
+    if (delBtn) {
+        delBtn.style.display = 'none';
+        delBtn.onclick = null;
+    }
     
     document.getElementById('party-loc-desc').innerText = active.partyPosition.lastUpdated;
 }
@@ -3006,6 +3245,16 @@ async function dmApi(action, payload) {
 }
 
 async function refreshDmGate() {
+    // Players never use this panel (hidden in updateAdminToolsChrome); bail early.
+    if (window.SeatSession && typeof SeatSession.get === 'function') {
+        const seat = SeatSession.get();
+        if (seat && seat.role && seat.role !== 'dm') {
+            dmShow('dm-locked');
+            const err = document.getElementById('dm-error');
+            if (err) err.innerText = 'DM Notes are only available on the DM seat.';
+            return;
+        }
+    }
     try {
         const res = await fetch('/api/dm-notes/status', {
             cache: 'no-store',
@@ -3015,6 +3264,12 @@ async function refreshDmGate() {
             dmShow('dm-locked');
             const err = document.getElementById('dm-error');
             if (err) err.innerText = 'Table locked — unlock the game board first.';
+            return;
+        }
+        if (res.status === 403) {
+            dmShow('dm-locked');
+            const err = document.getElementById('dm-error');
+            if (err) err.innerText = 'DM Notes require a DM seat.';
             return;
         }
         if (!res.ok) {
@@ -3377,10 +3632,12 @@ function initCombatPanel() {
     });
     
     document.getElementById('btn-next-turn').addEventListener('click', () => {
+        if (!requireDmAction('advance combat turns')) return;
         nextCombatTurn();
     });
     
     document.getElementById('btn-reset-combat').addEventListener('click', () => {
+        if (!requireDmAction('reset the combat tracker')) return;
         resetCombatTracker();
     });
 
@@ -3394,11 +3651,7 @@ function initCombatPanel() {
     }
     
     document.getElementById('btn-add-combatant-modal').addEventListener('click', () => {
-        document.getElementById('init-name-input').value = '';
-        document.getElementById('init-score-input').value = '';
-        document.getElementById('init-hp-input').value = '';
-        document.getElementById('init-is-monster').checked = false;
-        document.getElementById('modal-add-combatant').style.display = 'flex';
+        openAddCombatantModal();
     });
 }
 
@@ -3765,11 +4018,14 @@ function renderInitiativeList() {
     document.getElementById('combat-round').innerText = state.combatRound;
     
     if (state.combatants.length === 0) {
+        const addHint = canUseDestructiveAdmin()
+            ? "Roll checks on sheets or click 'Add Combatant' to start."
+            : 'Initiative is empty. Only the DM can add combatants or advance turns.';
         list.innerHTML = `
             <div style="text-align: center; padding: 40px 10px; color: var(--text-muted); border: 1px dashed rgba(197, 160, 89, 0.2); border-radius: 6px;">
                 <i class="fa-solid fa-people-group" style="font-size: 2rem; color: var(--border-gold-dim); margin-bottom: 10px;"></i>
                 <p>Initiative list is empty.</p>
-                <p style="font-size: 0.8rem; margin-top: 5px;">Roll checks on sheets or click 'Add Combatant' to start.</p>
+                <p style="font-size: 0.8rem; margin-top: 5px;">${addHint}</p>
             </div>
         `;
         return;
@@ -3777,11 +4033,16 @@ function renderInitiativeList() {
     
     state.combatants.forEach((c, idx) => {
         const isActive = idx === state.activeCombatantIndex;
+        const isDm = canUseDestructiveAdmin();
         const row = document.createElement('div');
         row.className = `init-row ${isActive ? 'active' : ''}`;
         if (c.isMonster) {
             row.style.borderLeft = '3px solid var(--accent-red)';
         }
+
+        const initVal = (c.initiative == null || c.initiative === '') ? '' : c.initiative;
+        const hpVal = formatCombatHpDisplay(c.hp);
+        const maxHpVal = formatCombatHpDisplay(c.maxHp);
         
         row.innerHTML = `
             <div class="init-order-btns">
@@ -3792,35 +4053,44 @@ function renderInitiativeList() {
                     <i class="fa-solid fa-chevron-down"></i>
                 </button>
             </div>
-            <div class="init-score-wrap" title="Edit initiative">
-                <input type="number" class="init-score-input" value="${c.initiative}" data-index="${idx}" aria-label="Initiative for ${c.name}">
+            <div class="init-score-wrap" title="Edit initiative (optional)">
+                <input type="number" class="init-score-input" value="${initVal}" placeholder="—" data-index="${idx}" aria-label="Initiative for ${escapeHtml(c.name || '')}">
             </div>
-            <div class="init-name">${c.name} ${c.isMonster ? '<span style="font-size:0.7rem; color:var(--accent-red); font-weight:bold;">[NPC]</span>' : ''}</div>
+            <div class="init-name">${escapeHtml(c.name || '')} ${c.isMonster ? '<span style="font-size:0.7rem; color:var(--accent-red); font-weight:bold;">[NPC]</span>' : ''}</div>
             <div class="init-hp-tracker">
                 <span style="font-size:0.75rem; color:var(--text-muted); margin-right:3px;">HP:</span>
-                <input type="number" class="init-hp-val" value="${c.hp}" title="Current HP">
+                <input type="text" class="init-hp-val" value="${escapeHtml(hpVal)}" placeholder="??" title="Current HP (blank or ?? if unknown)" inputmode="numeric">
                 <span style="color:var(--text-muted);">/</span>
-                <span style="font-size:0.85rem; color:var(--text-muted);">${c.maxHp || '--'}</span>
+                <span class="init-hp-max" style="font-size:0.85rem; color:var(--text-muted);">${escapeHtml(maxHpVal)}</span>
             </div>
             <div>
                 <span class="active-conditions" id="conditions-${idx}"></span>
             </div>
             <div style="text-align: right;">
-                <button class="map-ctrl-btn btn-delete-combatant" data-index="${idx}" style="color: var(--accent-red); border-color: transparent; background: transparent; padding: 0;" title="Remove from combat">
+                ${isDm ? `<button type="button" class="map-ctrl-btn btn-delete-combatant" data-index="${idx}" style="color: var(--accent-red); border-color: transparent; background: transparent; padding: 0;" title="Remove from combat">
                     <i class="fa-solid fa-circle-minus"></i>
-                </button>
+                </button>` : ''}
             </div>
         `;
         
         row.querySelector('.init-hp-val').addEventListener('change', (e) => {
-            c.hp = parseInt(e.target.value) || 0;
+            const n = parseOptionalCombatNumber(e.target.value);
+            c.hp = n;
+            e.target.value = formatCombatHpDisplay(n);
+            // If max was unknown and we now have current, leave max as ?? unless already set
             saveCombatNow();
         });
 
         row.querySelector('.init-score-input').addEventListener('change', (e) => {
-            c.initiative = parseInt(e.target.value, 10);
-            if (!Number.isFinite(c.initiative)) c.initiative = 0;
-            e.target.value = c.initiative;
+            const raw = String(e.target.value || '').trim();
+            if (!raw) {
+                c.initiative = null;
+                e.target.value = '';
+            } else {
+                const n = parseInt(raw, 10);
+                c.initiative = Number.isFinite(n) ? n : null;
+                e.target.value = c.initiative == null ? '' : c.initiative;
+            }
             saveCombatNow();
         });
 
@@ -3833,21 +4103,26 @@ function renderInitiativeList() {
             moveCombatant(idx, 1);
         });
         
-        row.querySelector('.btn-delete-combatant').addEventListener('click', (e) => {
-            e.stopPropagation();
-            state.combatants.splice(idx, 1);
-            if (state.activeCombatantIndex >= state.combatants.length) {
-                state.activeCombatantIndex = Math.max(0, state.combatants.length - 1);
-            }
-            renderInitiativeList();
-            saveCombatNow();
-        });
+        const delBtn = row.querySelector('.btn-delete-combatant');
+        if (delBtn) {
+            delBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!requireDmAction('remove combatants from the turn tracker')) return;
+                state.combatants.splice(idx, 1);
+                if (state.activeCombatantIndex >= state.combatants.length) {
+                    state.activeCombatantIndex = Math.max(0, state.combatants.length - 1);
+                }
+                renderInitiativeList();
+                saveCombatNow();
+            });
+        }
         
         list.appendChild(row);
     });
 }
 
 function nextCombatTurn() {
+    if (!canUseDestructiveAdmin()) return;
     if (state.combatants.length === 0) return;
     
     state.activeCombatantIndex++;
@@ -3861,14 +4136,21 @@ function nextCombatTurn() {
 }
 
 function resetCombatTracker() {
-    if (!confirm('Reset combat tracker?\n\n• Round → 1\n• Turn → first in list\n• Initiative scores → 0\n• Remove NPC/monster rows (PCs stay)\n\nYou can edit initiative numbers and use ↑↓ to reorder after reset.')) {
+    if (!canUseDestructiveAdmin()) {
+        alert('Only the DM can reset the combat tracker.');
+        return;
+    }
+    if (!confirm('Reset combat tracker?\n\n• Round → 1\n• Turn → first in list\n• Initiative scores → 0\n• Remove NPC/monster rows\n• Re-add all party characters (from character sheets)\n\nYou can edit initiative numbers and use ↑↓ to reorder after reset.')) {
         return;
     }
     state.combatRound = 1;
     state.activeCombatantIndex = 0;
-    state.combatants = state.combatants.filter(c => !c.isMonster);
+    // Drop NPCs; keep nothing stale — rebuild PCs from party sheets
+    state.combatants = (state.combatants || []).filter(c => !c.isMonster);
+    ensureAllPartyOnTracker({ zeroInit: true, refreshHpFromSheet: true });
+    // If campaign has no characters, still zero leftover PC-ish rows
     state.combatants.forEach(c => {
-        c.initiative = 0;
+        if (!c.isMonster) c.initiative = 0;
     });
     renderInitiativeList();
     saveCombatNow().then(ok => {
@@ -3885,6 +4167,85 @@ function initSessionLogsPanel() {
     });
 }
 
+/** Who is writing this note (seat character / DM label). */
+function getSessionActorName() {
+    const n = typeof getDiceRollerName === 'function' ? getDiceRollerName() : '';
+    if (n && n !== 'Dice Tray') return n;
+    try {
+        if (window.SeatSession && SeatSession.get()) {
+            const seat = SeatSession.get();
+            if (seat.role === 'dm') return seat.label ? ('DM (' + seat.label + ')') : 'DM';
+            if (seat.characterId) return seat.label || seat.characterId;
+            if (seat.label) return seat.label;
+        }
+    } catch (e) { /* ignore */ }
+    return 'Guest';
+}
+
+function formatSessionAdditionTime(iso) {
+    if (!iso) return '';
+    try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return String(iso);
+        return d.toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit'
+        });
+    } catch (e) {
+        return String(iso);
+    }
+}
+
+function renderSessionLogBody(log) {
+    const host = document.getElementById('session-detail-content');
+    if (!host) return;
+    host.innerHTML = '';
+
+    const main = document.createElement('div');
+    main.className = 'session-log-main';
+    const mainText = (log && log.content) ? String(log.content) : '';
+    if (mainText) {
+        main.innerText = mainText;
+    } else {
+        main.classList.add('session-log-main-empty');
+        main.innerText = '(No main DM notes yet.)';
+    }
+    host.appendChild(main);
+
+    const adds = (log && Array.isArray(log.additions)) ? log.additions : [];
+    if (!adds.length) return;
+
+    const head = document.createElement('div');
+    head.className = 'session-log-additions-heading';
+    head.textContent = 'Party additions';
+    host.appendChild(head);
+
+    // Show oldest first so the log reads top→bottom
+    const ordered = adds.slice().sort((a, b) => {
+        const ta = a && a.at ? Date.parse(a.at) : (a && a.id) || 0;
+        const tb = b && b.at ? Date.parse(b.at) : (b && b.id) || 0;
+        return ta - tb;
+    });
+    ordered.forEach(a => {
+        const block = document.createElement('div');
+        block.className = 'session-log-addition';
+        const meta = document.createElement('div');
+        meta.className = 'session-log-addition-meta';
+        const by = document.createElement('strong');
+        by.textContent = (a && a.by) ? String(a.by) : 'Someone';
+        meta.appendChild(by);
+        const when = document.createElement('span');
+        when.textContent = ' · ' + formatSessionAdditionTime(a && a.at);
+        meta.appendChild(when);
+        block.appendChild(meta);
+        const text = document.createElement('div');
+        text.className = 'session-log-addition-text';
+        text.innerText = (a && a.text) ? String(a.text) : '';
+        block.appendChild(text);
+        host.appendChild(block);
+    });
+}
+
 function renderSessionLogsList() {
     const active = getActiveCampaign();
     if (!active) return;
@@ -3892,7 +4253,7 @@ function renderSessionLogsList() {
     const list = document.getElementById('session-logs-list');
     list.innerHTML = '';
     
-    if (active.sessionLogs.length === 0) {
+    if (!active.sessionLogs || active.sessionLogs.length === 0) {
         list.innerHTML = '<p style="padding: 10px; color: var(--text-muted); font-style: italic;">No session logs recorded.</p>';
         return;
     }
@@ -3911,11 +4272,17 @@ function renderSessionLogsList() {
         if (isSelected || isActive) {
             activeLog = log;
         }
+
+        const addCount = Array.isArray(log.additions) ? log.additions.length : 0;
+        const addHint = addCount
+            ? `<p style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;"><i class="fa-solid fa-comments"></i> ${addCount} addition${addCount === 1 ? '' : 's'}</p>`
+            : '';
         
         item.innerHTML = `
-            <h4>${log.title}</h4>
-            <p class="date"><i class="fa-solid fa-calendar-days"></i> ${log.date}</p>
-            <p style="font-size:0.8rem; color:var(--text-muted); margin-top:5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${log.summary || ''}</p>
+            <h4>${escapeHtml(log.title || 'Untitled')}</h4>
+            <p class="date"><i class="fa-solid fa-calendar-days"></i> ${escapeHtml(log.date || '')}</p>
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-top:5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(log.summary || '')}</p>
+            ${addHint}
         `;
         
         item.addEventListener('click', () => {
@@ -3934,32 +4301,50 @@ function renderSessionLogsList() {
 
 function displaySessionDetail(log) {
     const active = getActiveCampaign();
+    if (!log) return;
     
     document.getElementById('session-edit-id').value = log.id;
-    document.getElementById('session-detail-title').innerText = log.title;
-    document.getElementById('session-detail-date').innerHTML = `<i class="fa-solid fa-calendar-days"></i> Play Date: ${log.date}`;
+    document.getElementById('session-detail-title').innerText = log.title || 'Untitled';
+    document.getElementById('session-detail-date').innerHTML = `<i class="fa-solid fa-calendar-days"></i> Play Date: ${escapeHtml(log.date || '')}`;
     document.getElementById('session-detail-summary').innerText = log.summary || '';
-    document.getElementById('session-detail-content').innerText = log.content || '';
+    renderSessionLogBody(log);
     
     document.getElementById('session-detail-actions').style.display = 'flex';
+    updateSessionLogChrome();
     
     document.getElementById('btn-edit-session').onclick = () => {
         openEditSessionLogModal(log);
     };
+
+    const addBtn = document.getElementById('btn-add-to-session');
+    if (addBtn) {
+        addBtn.onclick = () => {
+            openAddToSessionLogModal(log);
+        };
+    }
     
-    document.getElementById('btn-delete-session').onclick = () => {
-        if (confirm(`Are you sure you want to delete session "${log.title}"?`)) {
-            active.sessionLogs = active.sessionLogs.filter(s => s.id !== log.id);
-            saveState();
-            document.getElementById('session-edit-id').value = '';
-            document.getElementById('session-detail-title').innerText = 'Select a Session';
-            document.getElementById('session-detail-date').innerText = '';
-            document.getElementById('session-detail-summary').innerText = '';
-            document.getElementById('session-detail-content').innerText = 'Click on a session log from the left sidebar to view DM and player notes.';
-            document.getElementById('session-detail-actions').style.display = 'none';
-            renderSessionLogsList();
-        }
-    };
+    const delBtn = document.getElementById('btn-delete-session');
+    if (delBtn) {
+        const isDm = canUseDestructiveAdmin();
+        delBtn.style.display = isDm ? '' : 'none';
+        delBtn.disabled = !isDm;
+        delBtn.onclick = () => {
+            if (!requireDmAction('delete session logs')) return;
+            if (confirm(`Are you sure you want to delete session "${log.title}"?`)) {
+                if (!active) return;
+                active.sessionLogs = (active.sessionLogs || []).filter(s => s.id !== log.id);
+                saveState();
+                document.getElementById('session-edit-id').value = '';
+                document.getElementById('session-detail-title').innerText = 'Select a Session';
+                document.getElementById('session-detail-date').innerText = '';
+                document.getElementById('session-detail-summary').innerText = '';
+                const contentEl = document.getElementById('session-detail-content');
+                if (contentEl) contentEl.innerText = 'Click on a session log from the left sidebar to view notes and party additions.';
+                document.getElementById('session-detail-actions').style.display = 'none';
+                renderSessionLogsList();
+            }
+        };
+    }
 }
 
 // ----------------------------------------------------
@@ -4126,22 +4511,29 @@ function initModals() {
 
     // Save Combatant (Initiative)
     document.getElementById('btn-save-combatant').addEventListener('click', () => {
+        if (!requireDmAction('add combatants')) return;
         const name = document.getElementById('init-name-input').value.trim();
-        const initRoll = parseInt(document.getElementById('init-score-input').value) || 0;
-        const hp = parseInt(document.getElementById('init-hp-input').value) || 10;
+        const initRaw = document.getElementById('init-score-input').value;
+        const hpRaw = document.getElementById('init-hp-input').value;
         const isMonster = document.getElementById('init-is-monster').checked;
         
         if (!name) {
             alert('Please enter a combatant name.');
             return;
         }
+
+        const initiative = parseOptionalCombatNumber(initRaw);
+        const hp = parseOptionalCombatNumber(hpRaw);
+        // maxHp unknown unless HP was provided (then same as current until edited)
+        const maxHp = hp;
         
         state.combatants.push({
             name,
-            initiative: initRoll,
+            initiative,
             hp,
-            maxHp: hp,
-            isMonster
+            maxHp,
+            isMonster: !!isMonster,
+            characterId: null
         });
         
         sortInitiativeList();
@@ -4150,9 +4542,12 @@ function initModals() {
         saveCombatNow();
     });
 
-    // Save Session Log
+    // Save Session Log (DM write/edit only)
     document.getElementById('btn-save-session').addEventListener('click', () => {
+        if (!requireDmAction('write or edit session logs')) return;
         const active = getActiveCampaign();
+        if (!active) return;
+        if (!Array.isArray(active.sessionLogs)) active.sessionLogs = [];
         const id = document.getElementById('session-edit-id').value;
         const title = document.getElementById('session-title-input').value.trim();
         const date = document.getElementById('session-date-input').value;
@@ -4170,13 +4565,18 @@ function initModals() {
             log.date = date;
             log.summary = summary;
             log.content = content;
+            // Preserve log.additions — players' entries are not part of this form
+            if (!Array.isArray(log.additions)) log.additions = [];
         } else {
             const newLog = {
                 id: Date.now(),
                 title,
                 date,
                 summary,
-                content
+                content,
+                additions: [],
+                createdBy: getSessionActorName(),
+                createdAt: new Date().toISOString()
             };
             active.sessionLogs.push(newLog);
             document.getElementById('session-edit-id').value = newLog.id;
@@ -4186,6 +4586,41 @@ function initModals() {
         renderSessionLogsList();
         document.getElementById('modal-session-log').style.display = 'none';
     });
+
+    // Player/DM append to an existing session log
+    const saveAddBtn = document.getElementById('btn-save-session-add');
+    if (saveAddBtn) {
+        saveAddBtn.addEventListener('click', () => {
+            const active = getActiveCampaign();
+            if (!active) return;
+            if (!Array.isArray(active.sessionLogs)) active.sessionLogs = [];
+            const logId = document.getElementById('session-add-log-id').value;
+            const text = document.getElementById('session-add-text').value.trim();
+            if (!text) {
+                alert('Write a note before adding it to the log.');
+                return;
+            }
+            const log = active.sessionLogs.find(s => String(s.id) === String(logId));
+            if (!log) {
+                alert('Session log not found. Select a session and try again.');
+                return;
+            }
+            if (!Array.isArray(log.additions)) log.additions = [];
+            const by = getSessionActorName();
+            log.additions.push({
+                id: Date.now(),
+                at: new Date().toISOString(),
+                by,
+                text
+            });
+            saveState();
+            document.getElementById('modal-session-add').style.display = 'none';
+            document.getElementById('session-add-text').value = '';
+            document.getElementById('session-edit-id').value = log.id;
+            renderSessionLogsList();
+            displaySessionDetail(log);
+        });
+    }
 }
 
 function openEditCharSpecsModal() {
@@ -4306,7 +4741,13 @@ function openEditMarkerModal(marker) {
 }
 
 function openNewSessionLogModal() {
+    if (!requireDmAction('write a new session log')) return;
     const active = getActiveCampaign();
+    if (!active) {
+        alert('Create a campaign first.');
+        return;
+    }
+    if (!Array.isArray(active.sessionLogs)) active.sessionLogs = [];
     document.getElementById('session-edit-id').value = '';
     document.getElementById('session-modal-title').innerText = 'Write New Session Log';
     
@@ -4320,19 +4761,40 @@ function openNewSessionLogModal() {
 }
 
 function openEditSessionLogModal(log) {
+    if (!requireDmAction('edit session logs')) return;
+    if (!log) return;
     document.getElementById('session-edit-id').value = log.id;
     document.getElementById('session-modal-title').innerText = 'Edit Session Log';
     
-    document.getElementById('session-title-input').value = log.title;
-    document.getElementById('session-date-input').value = log.date;
+    document.getElementById('session-title-input').value = log.title || '';
+    document.getElementById('session-date-input').value = log.date || '';
     document.getElementById('session-summary-input').value = log.summary || '';
     document.getElementById('session-content-input').value = log.content || '';
     
     document.getElementById('modal-session-log').style.display = 'flex';
 }
 
+function openAddToSessionLogModal(log) {
+    if (!log || log.id == null) {
+        alert('Select a session log first.');
+        return;
+    }
+    const by = getSessionActorName();
+    document.getElementById('session-add-log-id').value = log.id;
+    document.getElementById('session-add-text').value = '';
+    const attr = document.getElementById('session-add-attribution');
+    if (attr) {
+        attr.textContent = 'Signed as: ' + by + ' — this name is saved with your note.';
+    }
+    document.getElementById('modal-session-add').style.display = 'flex';
+    setTimeout(() => {
+        const ta = document.getElementById('session-add-text');
+        if (ta) ta.focus();
+    }, 40);
+}
+
 function sortInitiativeList() {
-    state.combatants.sort((a, b) => b.initiative - a.initiative);
+    state.combatants.sort((a, b) => combatInitSortValue(b.initiative) - combatInitSortValue(a.initiative));
 }
 
 // ----------------------------------------------------
@@ -4343,6 +4805,11 @@ function initCampaignSettings() {
     
     // Read local image file as Base64 data URL
     mapFileInput.addEventListener('change', (e) => {
+        if (!canUseDestructiveAdmin()) {
+            alert('Only the DM can set the campaign map.');
+            e.target.value = '';
+            return;
+        }
         const file = e.target.files[0];
         if (file) {
             const reader = new FileReader();
@@ -4376,7 +4843,10 @@ function initCampaignSettings() {
         const campaign = state.campaigns.find(c => c.id === id);
         if (campaign) {
             campaign.name = name;
-            campaign.mapImage = mapImage || '';
+            // Map image is shared table state — DM only
+            if (canUseDestructiveAdmin()) {
+                campaign.mapImage = mapImage || '';
+            }
             saveState();
             renderCampaignSelector();
             renderAll();
@@ -4384,8 +4854,9 @@ function initCampaignSettings() {
         }
     });
     
-    // Create new campaign (blank slate) — modal + empty-state buttons
+    // Create new campaign (blank slate) — modal + empty-state buttons (DM-only)
     const onCreate = async () => {
+        if (!requireDmAction('add a campaign')) return;
         // First campaign on an empty table: use the Game Board name (no second naming prompt).
         // Extra campaigns (or rename) still go through Campaign Settings.
         const emptyTable = !state.campaigns || state.campaigns.length === 0;
@@ -4408,19 +4879,22 @@ function initCampaignSettings() {
     const addCampaignBtn = document.getElementById('btn-add-campaign');
         if (addCampaignBtn) addCampaignBtn.addEventListener('click', onCreate);
 
-        // Delete campaign — pick which one (map panel + settings)
+        // Delete campaign — pick which one (map panel + settings) — DM-only
         const openDeleteCampaignPicker = () => {
+            if (!requireDmAction('delete a campaign')) return;
             openDeleteCampaignModal();
         };
         const delCampaignBtn = document.getElementById('btn-delete-campaign');
         if (delCampaignBtn) delCampaignBtn.addEventListener('click', openDeleteCampaignPicker);
         document.getElementById('btn-delete-campaign-active').addEventListener('click', () => {
+            if (!requireDmAction('delete a campaign')) return;
             document.getElementById('modal-campaign-settings').style.display = 'none';
             openDeleteCampaignModal();
         });
         const delConfirm = document.getElementById('btn-delete-campaign-confirm');
         if (delConfirm) {
             delConfirm.addEventListener('click', async () => {
+                if (!requireDmAction('delete a campaign')) return;
                 const sel = document.getElementById('delete-campaign-select');
                 const id = sel && sel.value;
                 if (!id) {
@@ -4442,8 +4916,9 @@ function initCampaignSettings() {
             });
         }
     
-        // Clone campaign (keeps characters & markers, resets logs)
+        // Clone campaign (keeps characters & markers, resets logs) — DM-only
         document.getElementById('btn-clone-campaign-new').addEventListener('click', async () => {
+            if (!requireDmAction('clone a campaign')) return;
             const active = getActiveCampaign();
             if (!active) {
                 alert('No campaign to clone. Create a campaign first.');
@@ -4486,6 +4961,7 @@ function initCampaignSettings() {
     }
 
     function openDeleteCampaignModal() {
+        if (!requireDmAction('delete a campaign')) return;
         const camps = state.campaigns || [];
         if (!camps.length) {
             alert('No campaigns to delete.');
@@ -4511,6 +4987,7 @@ function initCampaignSettings() {
      * Returns true if deleted and saved.
      */
     async function deleteCampaignById(campaignId) {
+        if (!requireDmAction('delete a campaign')) return false;
         const id = String(campaignId || '');
         const camp = (state.campaigns || []).find(c => c.id === id);
         if (!camp) {
@@ -4602,6 +5079,7 @@ function buildBlankCampaign(name) {
  * Returns true if created.
  */
 async function createBlankCampaign(name) {
+    if (!requireDmAction('add a campaign')) return false;
     const trimmed = (name || '').trim();
     if (!trimmed) return false;
 
@@ -4635,6 +5113,7 @@ async function createBlankCampaign(name) {
 
 function openCampaignSettingsModal() {
     const active = getActiveCampaign();
+    const isDm = canUseDestructiveAdmin();
     const editId = document.getElementById('campaign-edit-id');
     const nameInput = document.getElementById('campaign-name-input');
     const mapInput = document.getElementById('campaign-map-input');
@@ -4642,6 +5121,7 @@ function openCampaignSettingsModal() {
     const saveBtn = document.getElementById('btn-save-campaign-settings');
     const cloneBtn = document.getElementById('btn-clone-campaign-new');
     const deleteBtn = document.getElementById('btn-delete-campaign-active');
+    const createBtn = document.getElementById('btn-create-campaign-new');
     const titleEl = document.querySelector('#modal-campaign-settings .modal-header h3');
 
     if (mapFileInput) mapFileInput.value = '';
@@ -4658,8 +5138,18 @@ function openCampaignSettingsModal() {
             mapInput.disabled = true;
         }
         if (saveBtn) saveBtn.disabled = true;
-        if (cloneBtn) cloneBtn.disabled = true;
-        if (deleteBtn) deleteBtn.disabled = true;
+        if (cloneBtn) {
+            cloneBtn.disabled = true;
+            cloneBtn.style.display = isDm ? '' : 'none';
+        }
+        if (deleteBtn) {
+            deleteBtn.disabled = true;
+            deleteBtn.style.display = isDm ? '' : 'none';
+        }
+        if (createBtn) {
+            createBtn.style.display = isDm ? '' : 'none';
+            createBtn.disabled = !isDm;
+        }
         if (titleEl) titleEl.textContent = 'Campaign Settings — empty table';
     } else {
         if (editId) editId.value = active.id;
@@ -4673,18 +5163,29 @@ function openCampaignSettingsModal() {
             mapInput.value = active.mapImage || '';
         }
         if (saveBtn) saveBtn.disabled = false;
-        if (cloneBtn) cloneBtn.disabled = false;
-        if (deleteBtn) deleteBtn.disabled = false;
+        if (cloneBtn) {
+            cloneBtn.disabled = !isDm;
+            cloneBtn.style.display = isDm ? '' : 'none';
+        }
+        if (deleteBtn) {
+            deleteBtn.disabled = !isDm;
+            deleteBtn.style.display = isDm ? '' : 'none';
+        }
+        if (createBtn) {
+            createBtn.style.display = isDm ? '' : 'none';
+            createBtn.disabled = !isDm;
+        }
         if (titleEl) titleEl.textContent = 'Campaign Settings';
     }
 
     document.getElementById('modal-campaign-settings').style.display = 'flex';
 }
 
-/** Map heading, party note, and empty-table overlay. */
+/** Map heading, party note, and empty-table overlay. Add/Delete campaign = DM only. */
 function updateEmptyCampaignChrome() {
     const empty = !state.campaigns || state.campaigns.length === 0;
     const active = getActiveCampaign();
+    const isDm = canUseDestructiveAdmin();
     const overlay = document.getElementById('empty-campaigns-overlay');
     const heading = document.getElementById('map-panel-heading');
     const sub = document.getElementById('map-panel-sub');
@@ -4692,6 +5193,8 @@ function updateEmptyCampaignChrome() {
     const addMarker = document.getElementById('btn-add-marker-modal');
     const addCampaign = document.getElementById('btn-add-campaign');
     const delCampaign = document.getElementById('btn-delete-campaign');
+    const emptyCreate = document.getElementById('btn-create-campaign-empty');
+    const emptyNote = document.getElementById('empty-campaigns-dm-note');
     const select = document.getElementById('campaign-select');
 
     if (overlay) overlay.style.display = empty ? 'flex' : 'none';
@@ -4703,13 +5206,24 @@ function updateEmptyCampaignChrome() {
         if (sub) {
             const g = (window.GameAccess && typeof GameAccess.get === 'function') ? GameAccess.get() : null;
             const gName = (g && g.gameName) || 'this game';
-            sub.textContent = 'Game table “' + gName + '” is ready — start a campaign to add characters and a map.';
+            sub.textContent = isDm
+                ? ('Game table “' + gName + '” is ready — start a campaign to add characters and a map.')
+                : ('Game table “' + gName + '” — waiting for the DM to start a campaign.');
         }
         if (partyDesc) partyDesc.textContent = '—';
         if (addMarker) addMarker.disabled = true;
-        // Empty table: primary CTA is the centered "Start campaign" card
+        // Empty table: Start campaign is DM-only
         if (addCampaign) addCampaign.style.display = 'none';
         if (delCampaign) delCampaign.style.display = 'none';
+        if (emptyCreate) {
+            emptyCreate.style.display = isDm ? '' : 'none';
+            emptyCreate.disabled = !isDm;
+            emptyCreate.title = isDm ? 'Start the first campaign' : 'Only the DM can start a campaign';
+        }
+        if (emptyNote) {
+            emptyNote.style.display = isDm ? 'none' : 'block';
+            emptyNote.textContent = 'Only the DM can start or add campaigns on this table.';
+        }
         if (select) {
             select.innerHTML = '';
             const opt = document.createElement('option');
@@ -4723,9 +5237,23 @@ function updateEmptyCampaignChrome() {
 
     if (select) select.disabled = false;
     if (addMarker) addMarker.disabled = false;
-    // Show Add/Delete Campaign once at least one campaign exists
-    if (addCampaign) addCampaign.style.display = '';
-    if (delCampaign) delCampaign.style.display = '';
+    // Add / Delete Campaign: DM seat only (players never see these)
+    if (addCampaign) {
+        addCampaign.style.display = isDm ? '' : 'none';
+        addCampaign.disabled = !isDm;
+        addCampaign.title = isDm
+            ? 'Add another campaign (adventure arc) on this game table'
+            : 'Only the DM can add a campaign';
+    }
+    if (delCampaign) {
+        delCampaign.style.display = isDm ? '' : 'none';
+        delCampaign.disabled = !isDm;
+        delCampaign.title = isDm
+            ? 'Delete one campaign from this table'
+            : 'Only the DM can delete a campaign';
+    }
+    if (emptyCreate) emptyCreate.style.display = 'none';
+    if (emptyNote) emptyNote.style.display = 'none';
     if (heading) heading.textContent = (active && active.name) ? active.name : 'Campaign Map';
     if (sub) {
         sub.textContent = "Track the party's journey and pin notable locations. Drag the Shield token to move the party.";
@@ -4800,12 +5328,80 @@ function canUseDestructiveAdmin() {
     return seat.role === 'dm' || SeatSession.isDm();
 }
 
+/** Alert + bail unless DM seat (or no seat system / offline). */
+function requireDmAction(what) {
+    if (canUseDestructiveAdmin()) return true;
+    alert('Only the DM can ' + (what || 'do that') + '.');
+    return false;
+}
+
+/** Combat turn controls + session log DM tools + player Add to Log. */
+function updateCombatAndSessionChrome() {
+    const isDm = canUseDestructiveAdmin();
+    const combatIds = [
+        'btn-next-turn',
+        'btn-reset-combat',
+        'btn-add-combatant-modal'
+    ];
+    combatIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = isDm ? '' : 'none';
+        el.disabled = !isDm;
+        el.title = isDm ? '' : 'DM seat required';
+    });
+    updateSessionLogChrome();
+    const combatHint = document.getElementById('combat-dm-tools-hint');
+    if (combatHint) {
+        combatHint.style.display = isDm ? 'none' : 'block';
+        combatHint.textContent = isDm
+            ? ''
+            : 'View only: Next Turn, Reset, and Add Combatant are DM controls. You can still edit HP / initiative on rows if the DM allows table play.';
+    }
+}
+
+/** Session logs: Write/Edit/Delete = DM; Add to Log = everyone (when a log is open). */
+function updateSessionLogChrome() {
+    const isDm = canUseDestructiveAdmin();
+    const newBtn = document.getElementById('btn-new-log-modal');
+    if (newBtn) {
+        newBtn.style.display = isDm ? '' : 'none';
+        newBtn.disabled = !isDm;
+        newBtn.title = isDm
+            ? 'Create a new session log'
+            : 'Only the DM can write a new session log — use Add to Log on an existing session';
+    }
+    const editBtn = document.getElementById('btn-edit-session');
+    if (editBtn) {
+        editBtn.style.display = isDm ? '' : 'none';
+        editBtn.disabled = !isDm;
+        editBtn.title = isDm
+            ? 'Edit title, date, summary, and main notes'
+            : 'Only the DM can edit the main session log — use Add to Log';
+    }
+    const delLog = document.getElementById('btn-delete-session');
+    if (delLog) {
+        delLog.style.display = isDm ? '' : 'none';
+        delLog.disabled = !isDm;
+        delLog.title = isDm ? 'Delete this session log' : 'Only the DM can delete session logs';
+    }
+    const addBtn = document.getElementById('btn-add-to-session');
+    if (addBtn) {
+        // Visible whenever detail actions are shown (displaySessionDetail)
+        addBtn.style.display = '';
+        addBtn.disabled = false;
+        addBtn.title = 'Append your note (signed as ' + getSessionActorName() + ')';
+    }
+}
+
 function updateAdminToolsChrome() {
     const importBtn = document.getElementById('btn-import-trigger');
     const resetBtn = document.getElementById('btn-reset-data');
     const exportDmBtn = document.getElementById('btn-export-data');
     const exportPlayerBtn = document.getElementById('btn-export-player');
     const hint = document.getElementById('admin-tools-hint');
+    const navDm = document.getElementById('nav-dm-notes');
+    const panelDm = document.getElementById('panel-dm');
     const isDm = canUseDestructiveAdmin();
     let isPlayerSeat = false;
     if (window.SeatSession && typeof SeatSession.get === 'function') {
@@ -4841,15 +5437,35 @@ function updateAdminToolsChrome() {
             ? 'Export only your character sheet + shared map/game data (no other players)'
             : 'Available when seated as a player character';
     }
+    // Ethan #2: DM Notes nav/panel only for DM seat (server also 403s player sessions)
+    if (navDm) navDm.style.display = isDm ? '' : 'none';
+    if (panelDm && !isDm) {
+        panelDm.classList.remove('active');
+        panelDm.style.display = 'none';
+        // If player was somehow on DM panel, bounce to map
+        if (panelDm.classList.contains('active')) {
+            /* handled by remove + hide */
+        }
+        const activeNav = document.querySelector('.nav-item.active');
+        if (activeNav && activeNav.getAttribute('data-target') === 'panel-dm') {
+            const mapNav = document.querySelector('.nav-item[data-target="panel-map"]');
+            if (mapNav) mapNav.click();
+        }
+    } else if (panelDm && isDm) {
+        panelDm.style.display = '';
+    }
     if (hint) {
         if (isPlayerSeat && !isDm) {
             hint.style.display = 'block';
-            hint.textContent = 'Player seat: Export My Character only. Import / Delete / full Export are DM tools.';
+            hint.textContent = 'Player seat: Export My Character only. Import / Delete Game / Add·Delete Campaign / DM Notes / full Export / map upload / combat turn controls / location-note delete are DM tools.';
         } else {
             hint.style.display = 'none';
             hint.textContent = '';
         }
     }
+    updateMapUploadChrome();
+    updateCombatAndSessionChrome();
+    updateEmptyCampaignChrome();
     refreshExportStaleBanner();
 }
 

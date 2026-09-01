@@ -335,49 +335,60 @@ const server = http.createServer(async (req, res) => {
             });
         }
 
-        /* Upload map into DATA_DIR/maps (table token; DM preferred but any seat OK for PoC) */
+        /* Upload map into DATA_DIR/maps — table token + DM seat (sessions live under game root). */
         if (urlPath === '/api/maps/upload' && req.method === 'POST') {
             const access = board.resolveAccessToken(gameAccessToken(req, null));
             if (!access) {
                 return json(res, 401, { error: 'Game table locked', code: 'game_auth' });
             }
-            let body;
-            try {
-                body = await readBody(req, MAX_MAP_BYTES * 1.4);
-            } catch (e) {
-                return json(res, e.status || 413, { error: e.message || 'Upload too large' });
-            }
-            let parsed;
-            try {
-                parsed = JSON.parse(body || '{}');
-            } catch (e) {
-                return json(res, 400, { error: 'Expected JSON { filename, dataBase64 }' });
-            }
-            const filename = sanitizeMapFilename(parsed.filename || parsed.name || 'campaign-map.webp');
-            const b64 = String(parsed.dataBase64 || parsed.data || '').replace(/^data:[^;]+;base64,/, '');
-            if (!b64) return json(res, 400, { error: 'Missing dataBase64' });
-            let buf;
-            try {
-                buf = Buffer.from(b64, 'base64');
-            } catch (e) {
-                return json(res, 400, { error: 'Invalid base64' });
-            }
-            if (!buf.length) return json(res, 400, { error: 'Empty file' });
-            if (buf.length > MAX_MAP_BYTES) {
-                return json(res, 413, { error: 'Map too large (max 25 MB)' });
-            }
-            const dest = path.join(mapsDir(), filename);
-            try {
-                fs.writeFileSync(dest, buf);
-            } catch (e) {
-                console.error('map upload write failed', e);
-                return json(res, 500, { error: 'Failed to save map file' });
-            }
-            return json(res, 200, {
-                ok: true,
-                filename,
-                url: mapPublicUrl(filename),
-                bytes: buf.length
+            return await store.runWithDataRoot(board.gameRoot(access.gameId), async () => {
+                const seatTok = sessionToken(req, null);
+                const sess = store.getSession(seatTok);
+                if (!sess || sess.role !== 'dm') {
+                    return json(res, 403, {
+                        error: 'Only the DM can upload a campaign map.',
+                        reason: 'dm_required'
+                    });
+                }
+                let body;
+                try {
+                    body = await readBody(req, MAX_MAP_BYTES * 1.4);
+                } catch (e) {
+                    return json(res, e.status || 413, { error: e.message || 'Upload too large' });
+                }
+                let parsed;
+                try {
+                    parsed = JSON.parse(body || '{}');
+                } catch (e) {
+                    return json(res, 400, { error: 'Expected JSON { filename, dataBase64 }' });
+                }
+                const filename = sanitizeMapFilename(parsed.filename || parsed.name || 'campaign-map.webp');
+                const b64 = String(parsed.dataBase64 || parsed.data || '').replace(/^data:[^;]+;base64,/, '');
+                if (!b64) return json(res, 400, { error: 'Missing dataBase64' });
+                let buf;
+                try {
+                    buf = Buffer.from(b64, 'base64');
+                } catch (e) {
+                    return json(res, 400, { error: 'Invalid base64' });
+                }
+                if (!buf.length) return json(res, 400, { error: 'Empty file' });
+                if (buf.length > MAX_MAP_BYTES) {
+                    return json(res, 413, { error: 'Map too large (max 25 MB)' });
+                }
+                // Maps directory is shared at board root (not per-game session file tree).
+                const dest = path.join(mapsDir(), filename);
+                try {
+                    fs.writeFileSync(dest, buf);
+                } catch (e) {
+                    console.error('map upload write failed', e);
+                    return json(res, 500, { error: 'Failed to save map file' });
+                }
+                return json(res, 200, {
+                    ok: true,
+                    filename,
+                    url: mapPublicUrl(filename),
+                    bytes: buf.length
+                });
             });
         }
 
@@ -436,12 +447,13 @@ async function handleTableApi(req, res, urlPath, access) {
             const dm = readDm();
             const configured = !!(dm && dm.pinHash);
             if (!configured) {
-                // Do not open DM seat with any/empty PIN. New games set DM PIN at create;
-                // legacy tables must configure DM Notes PIN first.
-                return json(res, 428, {
-                    error: 'DM PIN is not set for this game. Create the game with a DM PIN, or set one under DM Notes first.',
-                    needsDmPinSetup: true
-                });
+                // Bootstrap DM seat so only a DM can set the notes PIN (dm-notes APIs require DM seat).
+                // New games already write DM PIN at create-game; this path is for legacy / wiped notes.
+                const result = store.claimDmSeat({ label: p.label || 'DM' });
+                return json(res, 200, Object.assign({}, result, {
+                    needsDmPinSetup: true,
+                    message: 'DM seat granted. Set the DM Notes PIN before unlocking private notes.'
+                }));
             }
             if (!p.pin || String(p.pin).length < 4) {
                 return json(res, 400, { error: 'Enter the DM PIN.' });
@@ -651,6 +663,24 @@ async function handleTableApi(req, res, urlPath, access) {
         if (params && req.method === 'PUT') {
             const raw = await readBody(req, 10 * 1024 * 1024);
             let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            // Changing mapImage is DM-only (shared table asset), same as upload.
+            if (p.data && Object.prototype.hasOwnProperty.call(p.data, 'mapImage')) {
+                const sess = store.getSession(sessionToken(req, p));
+                let currentImage = '';
+                try {
+                    const doc = store.readDoc(store.metaPath(params.campaignId));
+                    currentImage = (doc && doc.data && doc.data.mapImage) || '';
+                } catch (e) { /* ignore */ }
+                const nextImage = p.data.mapImage == null ? '' : String(p.data.mapImage);
+                if (nextImage !== String(currentImage || '')) {
+                    if (!sess || sess.role !== 'dm') {
+                        return json(res, 403, {
+                            error: 'Only the DM can change the campaign map image.',
+                            reason: 'dm_required'
+                        });
+                    }
+                }
+            }
             const result = store.putMeta(params.campaignId, p.baseRevision, p.data);
             return json(res, result.status, result);
         }
@@ -727,12 +757,30 @@ async function handleTableApi(req, res, urlPath, access) {
             return json(res, 405, { error: 'Method Not Allowed' });
         }
 
-        /* ---------- DM notes (unchanged, per-game file) ---------- */
+        /* ---------- DM notes (PIN + DM seat; never player seats) ---------- */
         if (urlPath.startsWith('/api/dm-notes')) {
             const ip = req.socket.remoteAddress || 'unknown';
             const send = (code, obj) => json(res, code, obj);
 
+            // Ethan #2: PIN alone is not enough — must hold the DM seat.
+            function requireDmSeatSession(parsed) {
+                const seatTok = sessionToken(req, parsed || {});
+                const sess = store.getSession(seatTok);
+                if (!sess || sess.role !== 'dm') {
+                    return {
+                        ok: false,
+                        response: () => send(403, {
+                            error: 'DM Notes require a DM seat. Enter as DM first.',
+                            needsDmSeat: true
+                        })
+                    };
+                }
+                return { ok: true, sess };
+            }
+
             if (urlPath === '/api/dm-notes/status' && req.method === 'GET') {
+                const gate = requireDmSeatSession({});
+                if (!gate.ok) return gate.response();
                 const dm = readDm();
                 return send(200, { configured: !!(dm && dm.pinHash) });
             }
@@ -740,6 +788,8 @@ async function handleTableApi(req, res, urlPath, access) {
             if (req.method === 'POST') {
                 const raw = await readBody(req, 2e6);
                 let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return send(400, { error: 'Invalid JSON' }); }
+                const gate = requireDmSeatSession(p);
+                if (!gate.ok) return gate.response();
                 const wait = throttled(ip);
                 if (wait > 0) return send(429, { error: `Too many attempts. Try again in ${wait}s.` });
 
