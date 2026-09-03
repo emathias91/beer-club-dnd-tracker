@@ -185,6 +185,13 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-09-03 / app.js module split — Phase 3: state.js (P3 #15)
+
+- **`js/state.js`**: the shared `state` object, `LOCAL_UI_KEY`, `loadLocalUi`/`saveLocalUi`, `getActiveCampaign`, `getActiveCharacter`.
+- `state` is exported as a `const` — confirmed (via direct code search, not assumption) that it's never wholesale-reassigned anywhere in the codebase, only mutated field-by-field (`state.campaigns = ...`), so a plain live-binding import is sufficient; no reassignment-safe wrapper needed.
+- Riskiest phase so far (~50 functions read/write `state` across the whole app) — browser-verified with a broader pass than usual, including a full page-reload round-trip through `localStorage` to confirm `loadLocalUi`/`saveLocalUi` still restore `activeCharacterId`/`zoomLevel` correctly through the new module boundary.
+- Also removed a stray orphaned section-comment left over from the Phase 1 extraction.
+
 ### 2026-09-03 / app.js module split — Phases 1-2: utils.js, auth.js (P3 #15)
 
 - **`js/utils.js`**: `escapeHtml`, `signed`, `formatCombatHpDisplay`, `hpHealthColor`, `updateCharacterHpColor`, `fitTextareaInScrollHost`, `bindTextareaScrollHosts`, `downloadJsonBlob`, `playDiceSound`+`audioCtx` — generic, dependency-free helpers.

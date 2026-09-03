@@ -6,42 +6,7 @@ import {
     fitTextareaInScrollHost, bindTextareaScrollHosts, downloadJsonBlob, playDiceSound
 } from './js/utils.js';
 import { canUseDestructiveAdmin, requireDmAction } from './js/auth.js';
-
-// Global App State
-let state = {
-    campaigns: [],
-    activeCampaignId: '',
-    activeCharacterId: null,
-    zoomLevel: 1.0,
-    isAddingMarker: false,
-    combatants: [],
-    activeCombatantIndex: 0,
-    combatRound: 1,
-    rollHistory: [],
-    revisions: {},
-    locks: {},
-    claims: {},
-    offers: {},
-    dmForces: {}
-};
-
-// Local-only UI (never authoritative on server)
-const LOCAL_UI_KEY = 'dnd_local_ui';
-function loadLocalUi() {
-    try {
-        const u = JSON.parse(localStorage.getItem(LOCAL_UI_KEY) || '{}');
-        if (u.activeCharacterId) state.activeCharacterId = u.activeCharacterId;
-        if (typeof u.zoomLevel === 'number') state.zoomLevel = u.zoomLevel;
-    } catch (e) { /* ignore */ }
-}
-function saveLocalUi() {
-    try {
-        localStorage.setItem(LOCAL_UI_KEY, JSON.stringify({
-            activeCharacterId: state.activeCharacterId,
-            zoomLevel: state.zoomLevel
-        }));
-    } catch (e) { /* ignore */ }
-}
+import { state, LOCAL_UI_KEY, loadLocalUi, saveLocalUi, getActiveCampaign, getActiveCharacter } from './js/state.js';
 
 function setSyncStatus(text, level) {
     const el = document.getElementById('sync-status');
@@ -56,15 +21,6 @@ function sessionHeaders() {
     if (window.SeatSession) return SeatSession.headers();
     if (window.GameAccess) return GameAccess.headers();
     return { 'Content-Type': 'application/json' };
-}
-
-// Web Audio API Sound Synthesizer for rolling dice
-// ----------------------------------------------------
-// Campaign Getters
-// ----------------------------------------------------
-function getActiveCampaign() {
-    if (state.campaigns.length === 0) return null;
-    return state.campaigns.find(c => c.id === state.activeCampaignId) || state.campaigns[0];
 }
 
 // ----------------------------------------------------
@@ -1870,12 +1826,6 @@ function serializeEquipmentList(items) {
         .filter(it => it && it.name && it.qty > 0)
         .map(formatEquipmentLine)
         .join('\n');
-}
-
-function getActiveCharacter() {
-    const active = getActiveCampaign();
-    if (!active || !state.activeCharacterId) return null;
-    return active.characters[state.activeCharacterId] || null;
 }
 
 function commitActiveEquipment(items) {
