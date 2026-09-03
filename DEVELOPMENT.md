@@ -185,6 +185,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-09-03 / app.js module split — Phases 1-2: utils.js, auth.js (P3 #15)
+
+- **`js/utils.js`**: `escapeHtml`, `signed`, `formatCombatHpDisplay`, `hpHealthColor`, `updateCharacterHpColor`, `fitTextareaInScrollHost`, `bindTextareaScrollHosts`, `downloadJsonBlob`, `playDiceSound`+`audioCtx` — generic, dependency-free helpers.
+- **`js/auth.js`**: `canUseDestructiveAdmin`, `requireDmAction` — the DM/seat-role check, called from nearly every subsystem.
+- `app.js` now imports both instead of defining them; verbatim code move, no logic changes.
+- `Dockerfile` gets `COPY js ./js` (needed starting this phase — Phase 0 didn't create any files under `js/` yet).
+- Browser-verified: no console errors, DM chrome/auth gating, HP color, and character rendering all unaffected.
+- `app.js` line count: 5,934 → 5,770 (net, after Phase 0's small additions).
+
 ### 2026-09-03 / app.js module split — Phase 0 (P3 #15)
 
 - **`app.js` is now an ES module.** `index.html` loads it as `<script type="module" src="app.js">`; the separate `<script src="data.js">` tag is removed since `app.js` imports it directly (`import { INITIAL_CHARACTER_DATA } from './data.js';`). `data.js`'s consts now use `export const`.

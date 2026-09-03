@@ -10,6 +10,7 @@ COPY package.json ./
 COPY server.js ./
 COPY lib ./lib
 COPY index.html style.css app.js data.js seat-entry.js ./
+COPY js ./js
 COPY maps ./maps
 
 # Runtime dirs (DATA_DIR mounted over /app/data in compose)
