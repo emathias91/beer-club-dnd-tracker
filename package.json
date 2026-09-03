@@ -14,5 +14,5 @@
     "node": ">=18"
   },
   "author": "Beer Club",
-  "license": "ISC"
+  "license": "MIT"
 }

@@ -37,7 +37,7 @@ A **self-hosted campaign dashboard** for a home table:
 
 ## Current focus
 
-**Theme (next):** map asset UX (F6), cheaper sync (F8), backup restore UI (F9), multi-game board polish / blank game factory.
+**Theme (next):** cheaper sync (F8), backup restore UI (F9), multi-game board polish / blank game factory.
 
 **Theme (landed):** multi-device trust v1; F4 safer Import/Reset; **Game Board** landing with per-game table PIN + LMoP as a real game (blank D&D template for Reset).
 
@@ -62,7 +62,7 @@ Design summary lives in **this file** (below) and in History. Detailed local pla
 | F3 | Visible connection + save status | **Done (v1)** | `#sync-status` Live / Saving / Conflict / Offline |
 | F4 | Safer Reset & Import | **Done (v1)** | Preview + type `IMPORT`; Reset type `RESET`; Blob export; full `/api/state` replace; Import/Reset DM-seat only |
 | F5 | Schema `version` on saves | **Done (v1)** | `schemaVersion: 2` in manifest |
-| F6 | Missing map / asset UX | **Backlog** | Clear in-app message when map file 404s |
+| F6 | Missing map / asset UX | **Done (v1)** | Overlay title/body distinguish "no map set" vs "map file failed to load" (DM vs player copy); corrupt-but-200 image also now surfaces an error |
 | F7 | localStorage vs server authority | **Done (v1)** | Server snapshot authoritative; local cache strips UI-only fields |
 | F8 | Full re-render / poll cost | **Backlog** | Cheaper sync when unchanged |
 | F9 | In-app restore from rolling backups | **Backlog** | Backups on disk; surface later |
@@ -105,8 +105,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 6. **No schema version** — **Addressed (v1 / F5)**  
    Manifest carries `schemaVersion: 2`.
 
-7. **Missing map asset** — **Open (F6)**  
-   Default expects `phandelver-map-exterior-player.webp` (or `mapImage` path). File is intentionally not in git. UI should explain a 404 instead of a blank map.
+7. **Missing map asset** — **Addressed (v1 / F6)**  
+   Default expects `phandelver-map-exterior-player.webp` (or `mapImage` path). File is intentionally not in git. Error detection + a status line already shipped 2026-08-30; this pass closes the remaining gap where the overlay headline read "No map uploaded" even when a specific file was set but failed to load.
 
 8. **localStorage dual path** — **Addressed (v1 / F7)**  
    Server snapshot is authoritative; local cache is subordinate.
@@ -184,6 +184,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-03 / map-missing overlay: distinct 404 vs unset copy (F6)
+
+- **Overlay title/body now differ by cause:** "No map uploaded" (mapImage unset) vs "Map file not found" (mapImage set but failed to load — 404 or corrupt). DM/player copy variants preserved for each.
+- **`showMapMissing(show, message, reason)`** takes an explicit `'unset' | 'error'` reason, stored on `#map-missing-overlay.dataset.reason` so re-renders (role/seat refresh) keep the correct headline.
+- **Corrupt-but-200 images** (load fires, `naturalWidth === 0`) now also surface the "Map file not found" state instead of silently rendering blank.
+- Why: a DM with a broken map path was seeing the same "no map uploaded" headline as a table that never set one, sending them down the wrong troubleshooting path.
+- Scope: `app.js` only; `seat-entry.js` pre-login preview intentionally left as the simpler duplicate (no DM/player branching there yet); no README changes (wording-only, no new operator-facing setup behavior).
+- Also added a `LICENSE` (MIT) and a README link to it.
 
 ### 2026-08-30 / combat turn + session delete DM-only
 

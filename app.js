@@ -1318,19 +1318,22 @@ function resolveCampaignMapUrl(mapImage) {
     return raw;
 }
 
-function showMapMissing(show, message) {
+function showMapMissing(show, message, reason) {
     const overlay = document.getElementById('map-missing-overlay');
     const status = document.getElementById('map-missing-status');
     const img = document.getElementById('map-image');
     if (overlay) overlay.style.display = show ? 'flex' : 'none';
     if (img) img.style.visibility = show ? 'hidden' : 'visible';
     if (status && message != null) status.textContent = message;
+    if (overlay && reason) overlay.dataset.reason = reason;
     if (show) updateMapUploadChrome();
 }
 
 /** DM can upload / change map; players see read-only blank copy. */
 function updateMapUploadChrome() {
     const isDm = canUseDestructiveAdmin();
+    const overlay = document.getElementById('map-missing-overlay');
+    const reason = (overlay && overlay.dataset.reason) || 'unset';
     const title = document.getElementById('map-missing-title');
     const body = document.getElementById('map-missing-body');
     const actions = document.getElementById('map-missing-actions');
@@ -1339,11 +1342,20 @@ function updateMapUploadChrome() {
     const mapInput = document.getElementById('campaign-map-input');
     const mapInputLabel = mapInput && mapInput.closest('label');
 
-    if (title) title.textContent = 'No map uploaded';
-    if (body) {
-        body.innerHTML = isDm
-            ? 'Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.'
-            : 'No map uploaded. Only the DM can upload a campaign map.';
+    if (reason === 'error') {
+        if (title) title.textContent = 'Map file not found';
+        if (body) {
+            body.innerHTML = isDm
+                ? 'The map file saved for this campaign could not be loaded. Confirm it exists in the <code>maps/</code> folder, or upload a replacement.'
+                : 'The campaign map file is missing. Only the DM can fix this.';
+        }
+    } else {
+        if (title) title.textContent = 'No map uploaded';
+        if (body) {
+            body.innerHTML = isDm
+                ? 'Maps are not shipped in git (copyright). Place files in the <code>maps/</code> folder or upload one here.'
+                : 'No map uploaded. Only the DM can upload a campaign map.';
+        }
     }
     if (actions) actions.style.display = isDm ? '' : 'none';
     if (browseBtn) {
@@ -1370,12 +1382,18 @@ function bindMapImageLifecycle(mapImg) {
     if (!mapImg || mapImg.dataset.mapBound === '1') return;
     mapImg.dataset.mapBound = '1';
     mapImg.addEventListener('load', () => {
-        if (mapImg.naturalWidth > 0) showMapMissing(false, '');
+        if (mapImg.naturalWidth > 0) {
+            showMapMissing(false, '');
+        } else {
+            const active = getActiveCampaign();
+            const name = active && active.mapImage ? active.mapImage : '(none)';
+            showMapMissing(true, 'Map file appears corrupted: ' + name, 'error');
+        }
     });
     mapImg.addEventListener('error', () => {
         const active = getActiveCampaign();
         const name = active && active.mapImage ? active.mapImage : '(none)';
-        showMapMissing(true, 'Could not load: ' + name);
+        showMapMissing(true, 'Could not load: ' + name, 'error');
     });
 }
 
@@ -1617,7 +1635,7 @@ function renderMapMarkers() {
     const url = resolveCampaignMapUrl(active.mapImage);
     if (!url) {
         mapImg.removeAttribute('src');
-        showMapMissing(true, '');
+        showMapMissing(true, '', 'unset');
     } else {
         // Bust cache when switching maps
         const bust = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(url);
