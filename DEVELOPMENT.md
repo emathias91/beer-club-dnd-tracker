@@ -185,6 +185,13 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-09-03 / app.js module split — Phase 4: sync.js (P3 #15)
+
+- **`js/sync.js`**: the entire sync core — `sessionHeaders`, `setSyncStatus`, `applyServerSnapshot`, `checkSeatClaimStillMine`, `loadState`, `loadStateFromLocalStorage`, `saveState`, `queueSmartSave`, `saveStateToServer`, `smartSaveToServer` (~280 lines, moved whole per the earlier risk note), `showOfferPendingToast`, `processSeatNotices`, `isModalOpen`, `isUserEditing`, `isSharedStateEqual`, `startPollingSync`, `resetToDefaults`, `logRoll` (the shared activity-log helper), plus `IS_SERVER_MODE`. `app.js`: 5,770 → 4,909 lines.
+- **First use of a circular import in this migration**: `js/sync.js` imports `renderAll`, `renderCampaignSelector`, `canEditPlayerPrivate`, `buildSharedExportPayload`, `getDiceRollerName` back from `app.js` (which now explicitly `export`s them) — these haven't moved to their own modules yet. Safe because every usage is inside a function body, never at module-eval time; documented with a comment at the top of `sync.js`. Will be cleaned up (import source updated, no longer circular) as each function moves in a later phase.
+- **`_suppressCombatSyncUntil`** (unlike `state`, this one genuinely gets reassigned by code outside its owning module — combat's `markCombatLocalEdit`) is now private to `sync.js` with an exported setter `markCombatSyncSuppressedUntil(ms)`; `markCombatLocalEdit` (still in `app.js`, moves in the Combat phase) calls the setter instead of assigning directly.
+- Browser-verified with the broadest pass yet: boot, a live character-HP-edit → debounced `smartSaveToServer` → network PUT round trip, a dice roll through `logRoll`, the 3s poll loop, and a full page reload re-fetching from `/api/snapshot`.
+
 ### 2026-09-03 / app.js module split — Phase 3: state.js (P3 #15)
 
 - **`js/state.js`**: the shared `state` object, `LOCAL_UI_KEY`, `loadLocalUi`/`saveLocalUi`, `getActiveCampaign`, `getActiveCharacter`.
