@@ -393,3 +393,7 @@ automatically; these two still need editing by hand.
   (impossible HP, `"CLASS"` and `"SPECIES"` placeholders, ability scores of 123)
 - Populated the weapon lists, which were empty and left the dice roller unable
   to roll attacks
+
+## License
+
+MIT — see [LICENSE](LICENSE).
