@@ -1310,10 +1310,8 @@ e.g.
     <div id="offer-toast" class="offer-toast" style="display:none;"></div>
 
     <!-- ==================== SCRIPTS ==================== -->
-    <!-- Load Initial Database -->
-    <script src="data.js"></script>
-    <!-- Load App Logic -->
-    <script src="app.js"></script>
+    <!-- App Logic (ES module; imports data.js itself) -->
+    <script type="module" src="app.js"></script>
     <!-- Entry seats (boots app after claim) -->
     <script src="seat-entry.js"></script>
 

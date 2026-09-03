@@ -133,7 +133,7 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 
 ### P3 — maintainability (POC health)
 
-15. **Large monolithic front end** (`app.js`) — harder to review and test.  
+15. **Large monolithic front end** (`app.js`) — harder to review and test. **In progress:** converting to ES modules (`js/` directory), one subsystem extracted per phase (see History). Phase 0 (module conversion, no code moved yet) landed 2026-09-03.  
 16. **Little or no automated test coverage** — especially around sync (ad-hoc scripts only in local work).  
 17. **Admin vs player** — seats + DM prep lock are a start; Reset/Import still not DM-gated (F10).  
 18. **Observability** — basic request logging only; “who saved last” would help debug table nights.
@@ -184,6 +184,14 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-03 / app.js module split — Phase 0 (P3 #15)
+
+- **`app.js` is now an ES module.** `index.html` loads it as `<script type="module" src="app.js">`; the separate `<script src="data.js">` tag is removed since `app.js` imports it directly (`import { INITIAL_CHARACTER_DATA } from './data.js';`). `data.js`'s consts now use `export const`.
+- **`window.setSyncStatus = setSyncStatus;`** added explicitly right after its definition — `seat-entry.js` (still a classic script) calls it off `window`, which ES modules don't populate implicitly. `window.bootCampaignApp` needed no change (already assigned via `window.` explicitly).
+- **No code moved yet, no behavior change** — browser-verified: no console errors, DM boot/render/sync-status/modal flows all work identically to before.
+- Why: `app.js` is 5,900+ lines and flagged by this doc itself (P3 #15) as hard to review/test. This is the foundation phase of a full split into `js/*.js` modules — later phases (utils, auth, state, sync core, then each feature subsystem) will extract one module at a time, each independently verified and committed, tracked against a saved plan rather than done in one pass.
+- Scope: `app.js`, `data.js`, `index.html` only. `seat-entry.js` intentionally stays a classic script.
 
 ### 2026-09-03 / map-missing overlay: distinct 404 vs unset copy (F6)
 

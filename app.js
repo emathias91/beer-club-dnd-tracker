@@ -1,5 +1,7 @@
 // D&D Campaign Dashboard Core Controller (Multi-Campaign Version)
 
+import { INITIAL_CHARACTER_DATA } from './data.js';
+
 // Global App State
 let state = {
     campaigns: [],
@@ -42,6 +44,8 @@ function setSyncStatus(text, level) {
     el.textContent = text;
     el.dataset.level = level || 'ok';
 }
+// app.js is now an ES module — seat-entry.js reads this off window explicitly.
+window.setSyncStatus = setSyncStatus;
 
 function sessionHeaders() {
     if (window.SeatSession) return SeatSession.headers();
