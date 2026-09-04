@@ -2,11 +2,12 @@
 // party token, and the map-related modal wiring (pulled out of app.js's old
 // initModals grab-bag: the "Save Map Pin" handler now lives in initMapPanel).
 //
-// NOTE: updateEmptyCampaignChrome still lives in app.js as of this phase (moves
-// in the Campaigns phase) and app.js already exports it for this circular
-// import, same pattern as js/sync.js's — safe because it's only referenced
-// inside a function body, never at module-eval time.
-import { updateEmptyCampaignChrome } from '../app.js';
+// NOTE: updateEmptyCampaignChrome lives in js/campaigns.js, which itself
+// imports showMarkerDetails back from this module — a sibling-to-sibling
+// circular import (same pattern as js/combat.js <-> js/sessionLogs.js), safe
+// because both sides only reference the import inside a function body, never
+// at module-eval time.
+import { updateEmptyCampaignChrome } from './campaigns.js';
 import { state, getActiveCampaign, saveLocalUi } from './state.js';
 import { canUseDestructiveAdmin, requireDmAction } from './auth.js';
 import { sessionHeaders, setSyncStatus, saveStateToServer, saveState } from './sync.js';

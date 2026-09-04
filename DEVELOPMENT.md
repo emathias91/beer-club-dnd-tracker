@@ -188,6 +188,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-09-03 / app.js module split — Phase 9: campaigns.js (P3 #15)
+
+- **`js/campaigns.js`**: campaign settings + CRUD — `initCampaignSettings`, `openDeleteCampaignModal`, `deleteCampaignById`, `buildStarterCharacter`, `buildBlankCampaign`, `createBlankCampaign`, `openCampaignSettingsModal`, `updateEmptyCampaignChrome`, `renderCampaignSelector`.
+- **Corrected a stale claim from the original exploration/plan**: `openDeleteCampaignModal`/`deleteCampaignById` looked nested inside `initCampaignSettings` from their indentation, but direct brace-tracing showed they're already top-level functions — no restructuring needed, just moved as plain exports. (Second time this session a prior summary didn't hold up under direct verification — see also Phase 3's `state` reassignment correction.)
+- Simplest phase yet: no `initModals()` extraction needed, since all this subsystem's modal handlers already lived inside `initCampaignSettings` itself.
+- Two more circular-import repoints, both caught up front this time (lesson from Phase 8 applied): `js/sync.js`'s existing `renderCampaignSelector` import (from Phase 4) repointed from `../app.js` to `./campaigns.js`; `js/map.js`'s existing `updateEmptyCampaignChrome` import (from Phase 7) repointed the same way — now a second sibling-to-sibling pair (`map.js` ↔ `campaigns.js`, alongside `combat.js` ↔ `sessionLogs.js`).
+- `app.js`: 3,073 → 2,568 lines.
+- Browser-verified directly: Campaign Settings modal, Clone Campaign (full create path, not just the button wiring), and Delete Campaign — all correct, console clean throughout.
+
 ### 2026-09-03 / app.js module split — Phase 8: combat.js (P3 #15)
 
 - **`js/combat.js`**: the entire combat tracker + dice roller + party-on-tracker helpers — 30 functions total, the largest single phase so far: `initDefaultCombatants`, `partyCharactersForCombat`, `combatantMatchesParty`, `isPartyMemberInCombat`, `parseOptionalCombatNumber`, `combatInitSortValue`, `buildCombatantFromParty`, `ensureAllPartyOnTracker`, `renderPartyQuickAddList`, `openAddCombatantModal`, `rollForCharacter`, `switchToCombatPanel`, `initCombatPanel`, `markCombatLocalEdit`, `saveCombatNow`, `sortCombatantsByInitiative`, `moveCombatant`, `getDiceRollerName`, `rollDie`, `formatDieFace`, `getDiceCount`, `resetDiceCountToOne`, `renderDiceFaces`, `rollDice`, `renderRollHistory`, `renderInitiativeList`, `nextCombatTurn`, `resetCombatTracker`, `sortInitiativeList`, `updateCombatAndSessionChrome`.
