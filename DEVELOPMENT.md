@@ -185,6 +185,12 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-09-03 / app.js module split — Phase 5: dmNotes.js (P3 #15)
+
+- **`js/dmNotes.js`**: the PIN-gated DM Notes subsystem — `dmShow`, `dmApi`, `refreshDmGate`, `dmSetStatus`, `initDmPanel`, `dmState`. Confirmed physically misplaced inside app.js's old "Character Sheet" section comment despite being unrelated — now its own module.
+- Clean extraction, no circular import needed — only depends on `sessionHeaders` from `js/sync.js` (normal one-directional import). `app.js` now imports just `initDmPanel`, the only cross-reference from outside this subsystem. `app.js`: 4,909 → 4,715 lines.
+- Browser-verified: unlock with DM PIN, edit notes, autosave POST to `/api/dm-notes/save` round-trips, and the re-lock-on-navigate-away behavior all work identically to before.
+
 ### 2026-09-03 / app.js module split — Phase 4: sync.js (P3 #15)
 
 - **`js/sync.js`**: the entire sync core — `sessionHeaders`, `setSyncStatus`, `applyServerSnapshot`, `checkSeatClaimStillMine`, `loadState`, `loadStateFromLocalStorage`, `saveState`, `queueSmartSave`, `saveStateToServer`, `smartSaveToServer` (~280 lines, moved whole per the earlier risk note), `showOfferPendingToast`, `processSeatNotices`, `isModalOpen`, `isUserEditing`, `isSharedStateEqual`, `startPollingSync`, `resetToDefaults`, `logRoll` (the shared activity-log helper), plus `IS_SERVER_MODE`. `app.js`: 5,770 → 4,909 lines.
