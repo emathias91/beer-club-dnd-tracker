@@ -136,7 +136,7 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 
 ### P3 — maintainability (POC health)
 
-15. **Large monolithic front end** (`app.js`) — harder to review and test. **In progress:** converting to ES modules (`js/` directory), one subsystem extracted per phase (see History). Phase 0 (module conversion, no code moved yet) landed 2026-09-03.  
+15. **Large monolithic front end** (`app.js`) — harder to review and test. **In progress, nearly done:** converting to ES modules (`js/` directory), one subsystem extracted per phase (see History). `app.js` is down from ~5,934 lines to 713 as of Phase 10 (2026-09-04); remaining: Phase 11 (`js/importExport.js`) and Phase 12 (final cleanup of what's left — boot/nav/render orchestration).  
 16. **Little or no automated test coverage** — especially around sync (ad-hoc scripts only in local work).  
 17. **Admin vs player** — seats + DM prep lock are a start; Reset/Import still not DM-gated (F10).  
 18. **Observability** — basic request logging only; “who saved last” would help debug table nights.
@@ -187,6 +187,14 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-04 / app.js module split — Phase 10: characters.js (P3 #15)
+
+- **`js/characters.js`**: the biggest phase by far (~1,860 lines, 33 exports) — the full character sheet subsystem: DM lock chrome (`updateCharSheetChrome`, `dmToggleCharLock`), core render (`renderCharacterTabs`, `renderSelectedCharacter`), equipment (parse/format/render/add/remove/transfer + `initEquipmentInventory`), skills (get/render/add-custom + `initSkillsPanel`), backstory/player-private-notes (`setBackstoryTab`, `renderBackstoryAndTraits`, `renderPlayerPrivateNotes`, `initPlayerNotesUi`), resources/rests (`renderCharacterResources`, `applyRest`, `initRestButtons`), coins (`renderCoins`), the modifier-recalculation pair (`ensureProficiencyFlags`, `recalculateCharacterModifiers`), and the char-specs/HP modals (`openEditCharSpecsModal`, `openHPModal`) with their Save handlers folded into `initCharacterPanel` (same `initModals()`-extraction pattern as Phases 6-9).
+- Kept as one file per the earlier decision (still ~3x smaller than the original app.js).
+- `canEditPlayerPrivate` moves here from app.js — it was already circularly imported by `js/sync.js` (from Phase 4); repointed to `./characters.js`, joining the established sibling-circular-import pattern. No other module needed anything from this subsystem via a hidden circular edge (checked the whole `js/` directory, not just app.js, per the Phase 8 lesson) — every cross-reference was caught up front this time.
+- `app.js`: 2,568 → **713 lines**.
+- Thoroughly browser-verified directly (dialog overrides from the start, given the scale): character sheet render, HP damage via the folded-in modal handler, ability-check roll → combat panel navigation, Lock/Unlock sheet, Edit Character Specs → full modifier recalculation (confirmed STR score change propagated to both the ability card and the Strength skill), short rest, coin purse edit, and equipment add — all correct, console clean throughout.
 
 ### 2026-09-03 / app.js module split — Phase 9: campaigns.js (P3 #15)
 

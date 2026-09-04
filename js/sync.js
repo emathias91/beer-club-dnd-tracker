@@ -1,18 +1,15 @@
 // Sync core: server snapshot load/save, debounced piece-save, poll loop, seat
 // notices, and the shared activity log (logRoll).
 //
-// NOTE on the app.js import below: renderAll/canEditPlayerPrivate/
-// buildSharedExportPayload still live in app.js as of this phase of the module
-// split (they move to their own modules in later phases). This creates an
-// intentional circular import with app.js, which itself imports from this
-// module. That's safe here because every one of these names is only ever
-// referenced inside a function body (never at module-eval time), so by the
-// time any of them actually runs, both modules have finished loading. Update
-// this import (and drop the circularity) as each function moves to its own
-// module in a later phase.
-import {
-    renderAll, canEditPlayerPrivate, buildSharedExportPayload
-} from '../app.js';
+// NOTE on the app.js import below: renderAll/buildSharedExportPayload still
+// live in app.js as of this phase of the module split (they move to their own
+// modules in later phases). This creates an intentional circular import with
+// app.js, which itself imports from this module. That's safe here because
+// every one of these names is only ever referenced inside a function body
+// (never at module-eval time), so by the time any of them actually runs, both
+// modules have finished loading. Update this import (and drop the
+// circularity) as each function moves to its own module in a later phase.
+import { renderAll, buildSharedExportPayload } from '../app.js';
 // getDiceRollerName lives in js/combat.js (Combat phase) — same safe circular
 // pattern: combat.js imports logRoll from this module, this module imports
 // getDiceRollerName back from combat.js, only used inside function bodies.
@@ -21,6 +18,10 @@ import { getDiceRollerName } from './combat.js';
 // pattern again: campaigns.js imports saveState/etc. from this module, this
 // module imports renderCampaignSelector back, only used inside function bodies.
 import { renderCampaignSelector } from './campaigns.js';
+// canEditPlayerPrivate lives in js/characters.js (Characters phase) — same
+// pattern: characters.js imports saveState/etc. from this module, this module
+// imports canEditPlayerPrivate back, only used inside function bodies.
+import { canEditPlayerPrivate } from './characters.js';
 import { state, getActiveCampaign, saveLocalUi } from './state.js';
 
 export const IS_SERVER_MODE = window.location.protocol.startsWith('http');
