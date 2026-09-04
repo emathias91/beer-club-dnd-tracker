@@ -128,6 +128,9 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 13. **Mobile / small screens** — **Open**  
     Some breakpoints exist; map + dense sheets remain awkward on phones. Tablets matter more than phones for this POC.
 
+14a. **Save-before-revisions-loaded can silently no-op** — **Open, found 2026-09-03**  
+    `smartSaveToServer()` (`js/sync.js`) gates each piece-save on `typeof state.revisions[key] === 'number'` with no fallback for the "haven't loaded a snapshot yet" case; a save attempted in that narrow window updates the UI locally but never PUTs to the server, and a later poll cycle silently reverts it. Found during Phase 6 module-split verification (pre-existing, not a regression from that phase). Low severity in practice (revisions populate almost immediately after boot) but worth a real fix — e.g. `saveState()` awaiting `loadState()` once if revisions are empty.
+
 14. **Seed vs empty start** — **Addressed (2026-08-25/26)**  
     Empty table heal loop fixed; **Create Campaign** on map empty state + Campaign Settings guarded when no active campaign; blank create uses full `POST /api/state`.
 
@@ -184,6 +187,14 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-03 / app.js module split — Phase 6: sessionLogs.js (P3 #15)
+
+- **`js/sessionLogs.js`**: `getSessionActorName`, `formatSessionAdditionTime`, `renderSessionLogBody`, `renderSessionLogsList`, `displaySessionDetail`, `openNewSessionLogModal`, `openEditSessionLogModal`, `openAddToSessionLogModal`, `updateSessionLogChrome`, `initSessionLogsPanel`.
+- **First phase to restructure `initModals()`** rather than move whole functions verbatim: the "Save Session Log" and "Player/DM append to log" click handlers used to live inline inside `app.js`'s grab-bag `initModals()` — moved out and folded into `initSessionLogsPanel()` instead (both still get called unconditionally during boot, so wiring order doesn't matter). This is the pattern the plan flagged as needing careful per-domain carving rather than a verbatim cut.
+- Same established circular-import pattern reused for `getDiceRollerName` (from `../app.js`).
+- `app.js`: 4,715 → 4,364 lines.
+- Browser-verified with extra attention on the restructured handlers: create a new log, add a party addition, edit an existing log — all save/render correctly.
 
 ### 2026-09-03 / app.js module split — Phase 5: dmNotes.js (P3 #15)
 
