@@ -188,6 +188,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
 
+### 2026-09-03 / app.js module split — Phase 7: map.js (P3 #15)
+
+- **`js/map.js`**: the entire Map panel subsystem — `resolveCampaignMapUrl`, `showMapMissing`, `updateMapUploadChrome`, `bindMapImageLifecycle` (the F6 missing-map-overlay fix travels intact), `uploadMapFile`, `applyUploadedMap`, `openMapFilePicker`, `openAddMarkerModal`, `openEditMarkerModal`, `initMapPanel`, `renderMapMarkers`, `showMarkerDetails`, `showPartyDetails`.
+- Same Phase-6 pattern: the "Save Map Pin" handler moved out of `initModals()`'s grab-bag into `initMapPanel()`.
+- New circular-import edge: `js/map.js` ↔ `app.js` for `updateEmptyCampaignChrome` (not extracted yet, moves in the Campaigns phase), same safe pattern as the others.
+- `app.js`: 4,364 → 3,842 lines.
+- **Caught a real bug during verification** (fixed before commit, not shipped broken): `updateAdminToolsChrome()` (still in `app.js`) called `updateMapUploadChrome()` directly, but that function moved to `js/map.js` without being imported back — threw `ReferenceError` on every DM boot, silently swallowed by a `catch` block that called a blocking `alert()` before `console.error()`, which froze the tab (this is why the first verification attempt hung with no visible error — traced by overriding `window.alert`/`confirm`/`prompt` before reproducing). Fixed by adding `updateMapUploadChrome` to `app.js`'s import from `js/map.js`. Re-verified clean afterward: boot, DM chrome, character sheet, marker add via the moved Save handler, zoom.
+- **Process note:** earlier phases only spot-checked a few function names for external callers before removing them from `app.js`; this phase's larger function count (13) meant a spot-check missed one. Going forward, check *every* exported name's app.js reference count systematically (`grep -c` per name) before removing, not just the ones that seem likely to be called elsewhere.
+
 ### 2026-09-03 / app.js module split — Phase 6: sessionLogs.js (P3 #15)
 
 - **`js/sessionLogs.js`**: `getSessionActorName`, `formatSessionAdditionTime`, `renderSessionLogBody`, `renderSessionLogsList`, `displaySessionDetail`, `openNewSessionLogModal`, `openEditSessionLogModal`, `openAddToSessionLogModal`, `updateSessionLogChrome`, `initSessionLogsPanel`.
