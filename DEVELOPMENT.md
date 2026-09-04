@@ -91,8 +91,15 @@ Priorities are for a **home self-hosted POC**, not a commercial roadmap.
 | 2 | Personal UI mixed into shared state | **Addressed (v1)** — F1 |
 | 3 | Silent save/sync failure | **Addressed (v1)** — F3 |
 | 4 | No seat identity / unaware helper edits | **Addressed (v1)** — F0 / F2b / F2c |
+| 5 | **DM-force "Reload sheet" prompt not appearing for the seat holder** | **Open — reported 2026-09-04** |
 
 Residual risk: full `POST /api/state` still exists for import/compat paths; prefer piece APIs in normal play.
+
+**#5 detail:** when the DM edits a character's data (e.g. HP via the damage/heal modal) while a player holds that seat, the player is supposed to get a "DM changed &lt;character&gt;... Reload sheet to see updates" confirm prompt so their local sheet doesn't silently go stale. Reported not firing — player claims/reloads the seat and sees no prompt, no updated data. Not yet root-caused; not fixed.
+- Mechanism: `putCharacter()` in `lib/store.js` (~line 947) unconditionally sets `doc.lastDmForce = {at, summary, seenByHolder:false}` on any DM save, regardless of whether the seat is currently held. `buildEntrySnapshot()`/snapshot builder (`lib/store.js` ~line 542) includes `dmForces[charId]` for any requester whose fetched snapshot has an unseen force — this part looks correctly unfiltered by viewer identity from a read-through of the code, i.e. not an obvious server-side gate.
+- Client: `processSeatNotices()` in `js/sync.js` (~line 621) is the function that's supposed to show the confirm dialog — but it only runs at all when `SeatSession.get()` reports `role === 'player'` **and** `characterId` matches the force's character. Worth checking first whether the reporting session actually has a live player-seat claim (not just "logged in as" loosely) when this was tested, since the guard clause returns silently (no error, no log) if that condition isn't met.
+- Also worth checking: whether the confirm-summary text the user described ("prompting user to confirm changes") is this DM-force flow, or actually the separate **offer** flow (`state.offers[charId]`, same function, a few lines below) which is a different code path for a different scenario (a non-holder player editing a character they don't hold, not a DM edit) — the two produce different-looking prompts and confusing them would send debugging in the wrong direction.
+- Reproduction not yet confirmed step-by-step (two real browser sessions needed: one claiming the player seat, one as DM editing that same character's HP, watching whether the held session gets the prompt on its next 3s poll or on next boot).
 
 ### P1 — footguns and first-run clarity
 
