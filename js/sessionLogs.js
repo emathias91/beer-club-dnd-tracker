@@ -1,10 +1,5 @@
 // Session logs panel: DM-authored dated entries plus player "Add to Log".
-//
-// NOTE: getDiceRollerName is still defined in app.js as of this phase (moves in
-// the Combat phase) and app.js already exports it for js/sync.js's circular
-// import — reused here for the same reason. Safe: only referenced inside a
-// function body, never at module-eval time.
-import { getDiceRollerName } from '../app.js';
+import { getDiceRollerName } from './combat.js';
 import { getActiveCampaign } from './state.js';
 import { canUseDestructiveAdmin, requireDmAction } from './auth.js';
 import { saveState } from './sync.js';
