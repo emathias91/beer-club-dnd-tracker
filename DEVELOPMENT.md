@@ -182,11 +182,40 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 - Split-file piece saves: atomic write only; no extra rolling snapshot per edit.  
 - In-app restore still **F9**.
 
+### Frontend module map (P3 #15) — landed
+
+`app.js` is now a thin ES module entry point (~200 lines: boot sequence, nav, master renderer, `window.*` bridges). Everything else lives under `js/`:
+
+| Module | Owns |
+|---|---|
+| `js/utils.js` | Generic helpers (`escapeHtml`, `signed`, HP color, textarea auto-grow, dice sound) |
+| `js/auth.js` | DM/seat-role check (`canUseDestructiveAdmin`, `requireDmAction`) |
+| `js/state.js` | Shared `state` object, local-UI persistence, `getActiveCampaign`/`getActiveCharacter` |
+| `js/sync.js` | Server snapshot load/save, debounced piece-save, poll loop, seat notices, `logRoll` |
+| `js/dmNotes.js` | PIN-gated DM private notes |
+| `js/sessionLogs.js` | Session log panel |
+| `js/map.js` | Map panel, markers, upload lifecycle |
+| `js/combat.js` | Combat tracker + dice roller |
+| `js/campaigns.js` | Campaign settings, CRUD, selector |
+| `js/characters.js` | Character sheet, equipment, skills, rests, coins (largest module) |
+| `js/importExport.js` | JSON import/export, reset, admin-tools chrome |
+
+**Circular imports are expected and safe** in this graph — several modules import back from `app.js` or from a sibling module (e.g. `js/sync.js` ↔ `js/combat.js`, `js/map.js` ↔ `js/campaigns.js`). Every circular edge is documented with a comment at its import site explaining why it's safe (the imported binding is only ever referenced inside a function body, never at module-evaluation time) — read that comment before "fixing" what looks like a cycle.
+
 ---
 
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-04 / app.js module split — Phases 11-12: importExport.js, final cleanup (P3 #15, complete)
+
+- **`js/importExport.js`**: `buildSharedExportPayload`, `updateAdminToolsChrome`, `refreshExportStaleBanner`, `normalizeImportPayload`, `summarizeImportPayload`, `applyFullStateReplace`, `initImportExport`. `updateAdminToolsChrome`/`refreshExportStaleBanner` were bundled in here too (not explicitly called out in the original plan) since they're admin/import-export permission chrome, tightly coupled to this subsystem and already calling `refreshExportStaleBanner` internally.
+- `buildSharedExportPayload` finally leaves `app.js` — retires that circular edge on `js/sync.js` (repointed to `./importExport.js`, joining the same sibling-circular pattern as the others).
+- **Phase 12 turned out to be nearly free**: what remained in `app.js` after Phase 11 (`bootCampaignApp`, `applySeatFocus`, `initSeatChrome`, `initNavigation`, the generic backdrop-close `initModals()`, `migrateAllCharacters`, `renderAll`, `window.*` bridges) was already exactly the clean entry-point/orchestrator the plan anticipated — nothing left to extract. Only change: reworded a stale "5. Modals Management" section-comment left over from the original numbered sections (numbering no longer meant anything after 6 phases removed most of those sections). Kept the filename as `app.js` rather than renaming to `js/main.js` — purely cosmetic, and renaming would've meant updating `index.html`, the `Dockerfile`, and every other module's `'../app.js'` circular-import path for zero functional benefit.
+- `app.js`: 2,568 → 713 (Phase 11) → **207 lines** (Phase 12, cosmetic only, no further extraction). **Total across the whole split: 5,934 → 207 lines**, split across 11 focused `js/*.js` modules.
+- Browser-verified: full DM boot, the admin-chrome buttons (Export/Import/Delete Game) rendering correctly, a real "Export Game (DM)" click chained through `fetch('/api/export-package')` → `downloadJsonBlob` → `refreshExportStaleBanner()` (confirmed via server log: both `/api/export-package` and `/api/export-status` fired; the stale-export banner correctly disappeared afterward), and panel navigation re-rendering character state correctly. Console clean throughout.
+- **The app.js module split (P3 #15) is now complete.** See "Design notes" below for the final module map if picking this codebase up cold.
 
 ### 2026-09-04 / app.js module split — Phase 10: characters.js (P3 #15)
 
@@ -409,7 +438,9 @@ When you land a shared change:
 | Server | `server.js` |
 | Split store / seats / locks | `lib/store.js` |
 | Entry / claim UI | `seat-entry.js` |
-| Client | `app.js`, `index.html`, `style.css` |
+| Client entry point | `app.js` (boot/nav/master renderer only — see "Frontend module map" above) |
+| Client subsystems | `js/*.js` |
+| Markup / styling | `index.html`, `style.css` |
 | Seed data | `data.js` |
 | Container | `Dockerfile`, `docker-compose.yml` |
 | This status file | `DEVELOPMENT.md` |
