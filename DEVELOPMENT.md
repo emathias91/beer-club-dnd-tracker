@@ -122,8 +122,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 9. **Poll + full `renderAll()`** — **Open (F8)**  
    ~3s full fetch and broad re-render; fine for a small table and small JSON, gets noisier as history/logs grow.
 
-10. **Rolling backups are server-only** — **Open (F9)**  
-    Event-driven on full monolith-style saves (cap **30**); **not** a timer; piece saves do not create `campaign_state.backup-*`. No first-class UI to list/restore.
+10. **Rolling backups are server-only** — **Addressed (2026-09-06, F9)**  
+    In-app DM-only "Backups" panel to list and restore. Backups now snapshot the split-layout data itself (gzip, not a monolith copy) and trigger on *every* meta/map/combat/character write (piece-saves included, throttled to at most one auto-snapshot per 15 min), not just full-state writes — closes a real gap where ordinary gameplay edits were never backed up. DM Notes are backed up separately, AES-256-GCM encrypted with a key derived from the DM PIN, since the live `dm_notes.json` holds notes in plaintext and a plain copy would leak them to anyone with filesystem access. See "Backups (ops note)" below and History.
 
 11. **Level-up partial automation** — **Open**  
     Modifiers recalculate; HP max and spell slots remain manual — easy to forget mid-session.
@@ -182,11 +182,17 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 3. **Lock This Sheet** → **Edit Character Specs** → save → **Unlock This Sheet**  
 4. Status row under header (single line when width allows)
 
-### Backups (ops note)
+### Backups (ops note) — F9, landed 2026-09-06
 
-- **Not scheduled.** Rolling `campaign_state.backup-*.json` on full `POST /api/state` (and migrate), keep **30**.  
-- Split-file piece saves: atomic write only; no extra rolling snapshot per edit.  
-- In-app restore still **F9**.
+**The monolith mirror vs. the live layout.** `campaign_state.json` is a legacy full-state mirror, written on every full-state POST, kept only for backward-compatible `GET /api/state` and as the one-time migration source. It is **not** the live source of truth — that's the split per-document layout (`manifest.json` + `campaign/<id>/{meta,map,combat}.json` + `campaign/<id>/characters/<charId>.json`, all written through `writeDoc()` in `lib/store.js`). See the comment on `store.monolithPath()`.
+
+**Campaign-data backups.** `store.createBackupSnapshot()` reads the current split-layout files straight off disk, bundles them (manifest + every campaign's meta/map/combat/characters) into one JSON object, and gzips it to `backups/backup-<timestamp>.json.gz` under the game's data root. Hooked into `writeDoc()` itself — the single low-level function every meta/map/combat/character write funnels through (piece-saves *and* full-state writes) — so it covers ordinary gameplay edits, not just full-state writes like the old mechanism did. Throttled to at most one automatic snapshot per 15 minutes; `force: true` (manual "Back Up Now", and always right before a restore) bypasses the throttle. Capped at **30**, oldest pruned. Excludes `sessions.json` (stale seat claims shouldn't be restored) and `dm_notes.json` (see below). Restoring bumps every restored document's revision strictly above whatever's currently live, which forces every connected client into the app's existing conflict/reload path on its next poll — no new client-side sync logic needed.
+
+**DM Notes backups.** Kept separate and PIN-encrypted (AES-256-GCM, key derived via `crypto.scryptSync(pin, salt, 32)` — the same primitive already used for PIN hashing), since `dm_notes.json` holds notes in plaintext on disk (the PIN only gates API access, not the raw file) and a plain backup copy would leak them to anyone with filesystem access without needing the PIN at all. Each backup stores the salt that was active when it was taken (salts aren't secret), so it stays decryptable even after a later PIN change. Triggered on every notes save/setup (infrequent — no throttle needed), own 30-backup cap in `backups/dm-notes/`. A failed AES-GCM auth tag on restore *is* the "wrong PIN" signal.
+
+**UI.** DM-only "Backups" button in the sidebar (same `canUseDestructiveAdmin()` gate as Import/Export/Delete Game) opens a modal listing both backup types; campaign-data restores need typing `RESTORE` to confirm, DM-notes restores need the PIN that was active at backup time. `js/backups.js` owns the panel.
+
+**Old format.** The previous mechanism's `campaign_state.backup-*.json` files (uncompressed monolith copies) are left untouched on disk but are no longer created or listed — only the new `backups/*.json.gz` files show up in the UI.
 
 ### Frontend module map (P3 #15) — landed
 
@@ -213,6 +219,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-06 / In-app backup & restore UI (P2 #10 / F9, addressed)
+
+Added a DM-only "Backups" panel. Two changes bundled together:
+
+1. **New backup format/coverage.** Replaced the old rolling-backup mechanism (a raw copy of the legacy `campaign_state.json` monolith, only triggered on full-state writes) with `store.createBackupSnapshot()`: reads the current split-layout files (manifest + every campaign's meta/map/combat/characters) straight off disk and gzips them into one dated bundle. Hooked into `writeDoc()` — the single function every meta/map/combat/character write already funnels through — so it now covers ordinary piece-saves too, throttled to one automatic snapshot per 15 min (force-bypassed for manual "Back Up Now" and the safety snapshot always taken right before a restore). Still capped at 30. Removed the now-superseded monolith-copy call sites in `lib/store.js` (`writeSplitFromState`) and `server.js` (`saveStateSafely`) — old `campaign_state.backup-*.json` files are left on disk untouched, just no longer added to.
+2. **DM Notes backed up separately, PIN-encrypted** (AES-256-GCM, key derived from the DM PIN via the same `scryptSync` primitive already used for PIN hashing) — `dm_notes.json` holds notes in plaintext, so a plain copy would leak them without needing the PIN. Own 30-backup cap in `backups/dm-notes/`, triggered on every notes save.
+
+New: `js/backups.js` (panel), 5 new server routes (`/api/backups*`, `/api/dm-notes/backups*`), all DM-seat gated. Restoring bumps every restored document's revision above whatever's currently live, reusing the app's existing conflict/reload machinery to push connected clients to reload — no new client sync logic needed.
 
 ### 2026-09-06 / Fix silent no-op on map/meta/combat piece-saves (P2 #14a, addressed)
 

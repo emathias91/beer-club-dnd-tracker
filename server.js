@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const store = require('./lib/store');
 const board = require('./lib/board');
 
@@ -105,6 +106,113 @@ function pinValid(pin) {
     return crypto.timingSafeEqual(attempt, stored);
 }
 
+/**
+ * DM Notes backups are kept separate from the general campaign-data backups
+ * (store.createBackupSnapshot) and encrypted with a key derived from the DM
+ * PIN — dm_notes.json holds the notes text in plaintext on disk (the PIN only
+ * gates API access, not the raw file), and a plain backup copy would leak that
+ * to anyone with filesystem access without needing the PIN at all.
+ */
+function dmNotesBackupsDir() {
+    return path.join(store.dataRoot(), 'backups', 'dm-notes');
+}
+
+function dmNotesBackupFileName(stamp) {
+    return `dmnotes-backup-${stamp}.json`;
+}
+
+/** Encrypts with the CURRENT dm.salt, stored alongside the ciphertext (salts
+ *  aren't secret) so this backup stays decryptable even after a later
+ *  change-pin rotates the live salt. */
+function createDmNotesBackupSnapshot(pin) {
+    const dm = readDm();
+    if (!dm || !dm.pinHash) return null;
+    const dir = dmNotesBackupsDir();
+    fs.mkdirSync(dir, { recursive: true });
+
+    const key = crypto.scryptSync(String(pin), dm.salt, 32);
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const plaintext = zlib.gzipSync(Buffer.from(JSON.stringify({
+        notes: dm.notes || '',
+        updated: dm.updated || null
+    }), 'utf8'));
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = dmNotesBackupFileName(stamp);
+    const record = {
+        createdAt: nowIsoSafe(),
+        salt: dm.salt,
+        iv: iv.toString('base64'),
+        authTag: authTag.toString('base64'),
+        ciphertext: ciphertext.toString('base64')
+    };
+    fs.writeFileSync(path.join(dir, fileName), JSON.stringify(record), 'utf8');
+
+    try {
+        const all = fs.readdirSync(dir)
+            .filter(f => f.startsWith('dmnotes-backup-') && f.endsWith('.json'))
+            .sort();
+        while (all.length > MAX_BACKUPS) {
+            fs.unlinkSync(path.join(dir, all.shift()));
+        }
+    } catch (e) { /* best effort */ }
+
+    return { fileName, createdAt: record.createdAt };
+}
+
+function listDmNotesBackups() {
+    const dir = dmNotesBackupsDir();
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir)
+        .filter(f => f.startsWith('dmnotes-backup-') && f.endsWith('.json'))
+        .map(fileName => {
+            const filePath = path.join(dir, fileName);
+            let createdAt = null;
+            try { createdAt = JSON.parse(fs.readFileSync(filePath, 'utf8')).createdAt; } catch (e) { /* ignore */ }
+            return { fileName, createdAt, size: fs.statSync(filePath).size };
+        })
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+/** A failed AES-GCM auth tag check IS the "wrong PIN" signal — no separate
+ *  pinValid() needed, since the backup's own stored salt (not the live one)
+ *  is what the key is derived from. */
+function restoreDmNotesBackup(fileName, pin) {
+    const safe = path.basename(String(fileName || ''));
+    if (!safe || !safe.startsWith('dmnotes-backup-') || !safe.endsWith('.json')) {
+        return { status: 404, error: 'Backup not found' };
+    }
+    const filePath = path.join(dmNotesBackupsDir(), safe);
+    if (!fs.existsSync(filePath)) return { status: 404, error: 'Backup not found' };
+
+    let record;
+    try { record = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch (e) {
+        return { status: 500, error: 'Backup file is corrupted' };
+    }
+
+    try {
+        const key = crypto.scryptSync(String(pin), record.salt, 32);
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(record.iv, 'base64'));
+        decipher.setAuthTag(Buffer.from(record.authTag, 'base64'));
+        const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(record.ciphertext, 'base64')),
+            decipher.final()
+        ]);
+        const { notes, updated } = JSON.parse(zlib.gunzipSync(plaintext).toString('utf8'));
+
+        const dm = readDm() || {};
+        dm.notes = notes || '';
+        dm.updated = nowIsoSafe();
+        writeDm(dm);
+        return { status: 200, restoredFrom: safe, restoredAt: dm.updated, originalUpdated: updated };
+    } catch (e) {
+        return { status: 401, error: 'Incorrect PIN.' };
+    }
+}
+
 const failures = new Map();
 function throttled(ip) {
     const f = failures.get(ip);
@@ -123,25 +231,12 @@ function clearFailures(ip) {
     failures.delete(ip);
 }
 
+// Writes the legacy monolith mirror (see the note on store.monolithPath()) — no
+// longer takes its own rolling backup here; that's now store.createBackupSnapshot(),
+// hooked into every split-layout write via writeDoc().
 function saveStateSafely(body, callback) {
     const target = dbPath();
-    const dir = path.dirname(target);
     try {
-        if (fs.existsSync(target)) {
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const backup = path.join(dir, `campaign_state.backup-${stamp}.json`);
-            try { fs.copyFileSync(target, backup); } catch (e) {
-                console.warn('Could not write backup:', e.message);
-            }
-            try {
-                const olds = fs.readdirSync(dir)
-                    .filter(f => f.startsWith('campaign_state.backup-') && f.endsWith('.json'))
-                    .sort();
-                while (olds.length > MAX_BACKUPS) {
-                    fs.unlinkSync(path.join(dir, olds.shift()));
-                }
-            } catch (e) { /* best-effort */ }
-        }
         const tmp = target + '.tmp';
         fs.writeFileSync(tmp, body, 'utf8');
         fs.renameSync(tmp, target);
@@ -780,6 +875,36 @@ async function handleTableApi(req, res, urlPath, access) {
             return persistFullState(body, res);
         }
 
+        /* ---------- Rolling backups (split-layout snapshots; DM seat only) ---------- */
+        if (urlPath === '/api/backups' && req.method === 'GET') {
+            const sess = store.getSession(sessionToken(req, null));
+            if (!sess || sess.role !== 'dm') {
+                return json(res, 403, { error: 'DM seat required.', reason: 'dm_required' });
+            }
+            return json(res, 200, { backups: store.listBackups() });
+        }
+
+        if (urlPath === '/api/backups/create' && req.method === 'POST') {
+            const sess = store.getSession(sessionToken(req, null));
+            if (!sess || sess.role !== 'dm') {
+                return json(res, 403, { error: 'DM seat required.', reason: 'dm_required' });
+            }
+            const result = store.createBackupSnapshot({ force: true, reason: 'manual' });
+            if (!result) return json(res, 500, { error: 'Backup failed — no campaign data to snapshot yet.' });
+            return json(res, 200, result);
+        }
+
+        if (urlPath === '/api/backups/restore' && req.method === 'POST') {
+            const raw = await readBody(req, 1e5);
+            let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
+            const sess = store.getSession(sessionToken(req, p));
+            if (!sess || sess.role !== 'dm') {
+                return json(res, 403, { error: 'DM seat required.', reason: 'dm_required' });
+            }
+            const result = store.restoreBackup(p.filename);
+            return json(res, result.status, result);
+        }
+
         /* ---------- DM notes (PIN + DM seat; never player seats) ---------- */
         if (urlPath.startsWith('/api/dm-notes')) {
             const ip = req.socket.remoteAddress || 'unknown';
@@ -808,6 +933,26 @@ async function handleTableApi(req, res, urlPath, access) {
                 return send(200, { configured: !!(dm && dm.pinHash) });
             }
 
+            // Listing metadata only (timestamp + size) — no PIN needed, matches
+            // /api/dm-notes/status's seat-only gate; content stays encrypted.
+            if (urlPath === '/api/dm-notes/backups' && req.method === 'GET') {
+                const gate = requireDmSeatSession({});
+                if (!gate.ok) return gate.response();
+                return send(200, { backups: listDmNotesBackups() });
+            }
+
+            if (urlPath === '/api/dm-notes/backups/restore' && req.method === 'POST') {
+                const raw = await readBody(req, 1e5);
+                let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return send(400, { error: 'Invalid JSON' }); }
+                const gate = requireDmSeatSession(p);
+                if (!gate.ok) return gate.response();
+                const wait = throttled(ip);
+                if (wait > 0) return send(429, { error: `Too many attempts. Try again in ${wait}s.` });
+                const result = restoreDmNotesBackup(p.filename, p.pin);
+                if (result.status === 401) noteFailure(ip); else clearFailures(ip);
+                return send(result.status, result);
+            }
+
             if (req.method === 'POST') {
                 const raw = await readBody(req, 2e6);
                 let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return send(400, { error: 'Invalid JSON' }); }
@@ -822,6 +967,7 @@ async function handleTableApi(req, res, urlPath, access) {
                     if (readDm() && readDm().pinHash) return send(409, { error: 'Already configured' });
                     const salt = crypto.randomBytes(16).toString('hex');
                     writeDm({ pinHash: hashPin(pin, salt), salt, notes: p.notes || '', updated: nowIsoSafe() });
+                    try { createDmNotesBackupSnapshot(pin); } catch (e) { /* best effort */ }
                     return send(200, { ok: true });
                 }
                 if (urlPath === '/api/dm-notes/unlock') {
@@ -843,6 +989,7 @@ async function handleTableApi(req, res, urlPath, access) {
                     dm.notes = p.notes || '';
                     dm.updated = nowIsoSafe();
                     writeDm(dm);
+                    try { createDmNotesBackupSnapshot(p.pin); } catch (e) { /* best effort */ }
                     return send(200, { ok: true, updated: dm.updated });
                 }
                 if (urlPath === '/api/dm-notes/change-pin') {
@@ -999,7 +1146,7 @@ server.listen(PORT, '0.0.0.0', () => {
         const b = board.listGamesPublic();
         console.log(`Games: ${b.games.map(g => g.id).join(', ') || '(none)'}`);
     } catch (e) { /* ignore */ }
-    console.log(`Keeping up to ${MAX_BACKUPS} monolith backups per game.`);
+    console.log(`Keeping up to ${MAX_BACKUPS} rolling backups per game (campaign data + DM notes, each capped separately).`);
     console.log('==================================================');
 });
 

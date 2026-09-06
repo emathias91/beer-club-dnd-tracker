@@ -184,6 +184,9 @@
                 <button class="btn-dnd" id="btn-reset-data" style="color: var(--accent-red); border-color: rgba(166,38,38,0.4);" title="Permanently delete this game from the board (DM)">
                     <i class="fa-solid fa-trash-can"></i> Delete Game
                 </button>
+                <button class="btn-dnd" id="btn-backups-open" title="Browse and restore rolling backups (DM)">
+                    <i class="fa-solid fa-clock-rotate-left"></i> Backups
+                </button>
                 <p id="export-stale-banner" class="admin-tools-hint" style="display:none;"></p>
                 <p id="admin-tools-hint" class="admin-tools-hint" style="display:none;"></p>
             </div>
@@ -1311,6 +1314,56 @@ e.g.
                 <button type="button" class="btn-dnd btn-dnd-danger" id="btn-reset-apply" disabled>
                     <i class="fa-solid fa-trash-can"></i> Delete game
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backups & Restore (P2 #10 / F9) -->
+    <div class="modal-overlay" id="modal-backups">
+        <div class="modal-card modal-card-wide">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-clock-rotate-left"></i> Backups & Restore</h3>
+                <button type="button" class="map-ctrl-btn close-modal" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-warn">
+                    Restoring replaces live data on the server for everyone at the table. A safety backup of the
+                    current state is always taken automatically right before a restore, so it's reversible.
+                </p>
+
+                <div class="backups-section">
+                    <div class="backups-section-header">
+                        <h4>Campaign Data</h4>
+                        <button type="button" class="btn-dnd" id="btn-backups-create"><i class="fa-solid fa-camera"></i> Back Up Now</button>
+                    </div>
+                    <p class="entry-hint">Auto-backed up every 15 min during play, plus on demand and right before any restore.</p>
+                    <div id="backups-list" class="backups-list"><!-- rows rendered by js/backups.js --></div>
+                </div>
+
+                <div class="backups-section">
+                    <h4>DM Notes</h4>
+                    <p class="entry-hint">Backed up separately, encrypted with your DM PIN — restoring needs the PIN that was active when that backup was taken.</p>
+                    <div id="dm-notes-backups-list" class="backups-list"><!-- rows rendered by js/backups.js --></div>
+                </div>
+
+                <div id="backups-restore-confirm" class="backups-restore-confirm" style="display:none;">
+                    <p class="modal-warn" id="backups-restore-confirm-label"></p>
+                    <div class="form-group">
+                        <label for="backups-restore-confirm-input">Type <code>RESTORE</code> to enable</label>
+                        <input type="text" id="backups-restore-confirm-input" autocomplete="off" spellcheck="false" placeholder="RESTORE">
+                    </div>
+                    <div class="modal-footer" style="padding: 12px 0 0;">
+                        <button type="button" class="btn-dnd" id="btn-backups-restore-cancel">Cancel</button>
+                        <button type="button" class="btn-dnd btn-dnd-danger" id="btn-backups-restore-apply" disabled>
+                            <i class="fa-solid fa-triangle-exclamation"></i> Restore this backup
+                        </button>
+                    </div>
+                </div>
+
+                <p id="backups-status" class="admin-tools-hint" style="display:none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-dnd close-modal">Close</button>
             </div>
         </div>
     </div>

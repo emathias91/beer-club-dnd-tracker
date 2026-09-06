@@ -27,6 +27,7 @@ import {
     initSkillsPanel, initRestButtons, ensureProficiencyFlags
 } from './js/characters.js';
 import { updateAdminToolsChrome, initImportExport } from './js/importExport.js';
+import { initBackupsPanel, updateBackupsChrome } from './js/backups.js';
 // app.js is now an ES module — seat-entry.js reads this off window explicitly.
 window.setSyncStatus = setSyncStatus;
 
@@ -61,6 +62,7 @@ window.bootCampaignApp = async function bootCampaignApp() {
     initSessionLogsPanel();
     initModals();
     initImportExport();
+    initBackupsPanel();
     initCampaignSettings();
     initRestButtons();
     initDmPanel();
@@ -94,6 +96,7 @@ function applySeatFocus() {
         updateCharSheetChrome();
     }
     updateAdminToolsChrome();
+    updateBackupsChrome();
 }
 
 function initSeatChrome() {
@@ -119,6 +122,7 @@ function initSeatChrome() {
     }
     updateCharSheetChrome();
     updateAdminToolsChrome();
+    updateBackupsChrome();
 }
 
 // ----------------------------------------------------
