@@ -16,7 +16,7 @@ import { initSessionLogsPanel, renderSessionLogsList, updateSessionLogChrome } f
 import { initMapPanel, renderMapMarkers, showMarkerDetails, updateMapUploadChrome } from './js/map.js';
 import {
     initDefaultCombatants, rollForCharacter, switchToCombatPanel, initCombatPanel, rollDie,
-    renderRollHistory, renderInitiativeList, updateCombatAndSessionChrome
+    renderRollHistory, renderInitiativeList, renderPartyStatusStrip, updateCombatAndSessionChrome
 } from './js/combat.js';
 import {
     initCampaignSettings, updateEmptyCampaignChrome, renderCampaignSelector
@@ -144,6 +144,7 @@ function initNavigation() {
                 renderCharacterTabs();
                 renderSelectedCharacter();
             } else if (targetPanelId === 'panel-combat') {
+                renderPartyStatusStrip();
                 renderInitiativeList();
                 renderRollHistory();
             } else if (targetPanelId === 'panel-logs') {
@@ -203,6 +204,7 @@ function renderAll() {
     renderMapMarkers();
     renderCharacterTabs();
     renderSelectedCharacter();
+    renderPartyStatusStrip();
     renderInitiativeList();
     renderRollHistory();
     renderSessionLogsList();

@@ -128,8 +128,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 11. **Level-up partial automation** — **Open**  
     Modifiers recalculate; HP max and spell slots remain manual — easy to forget mid-session.
 
-12. **No compact party combat overview** — **Open**  
-    Sheets are one character at a time; running the table’s HP at a glance is awkward (QoL for the DM, not new content).
+12. **No compact party combat overview** — **Addressed (2026-09-05)**  
+    Added a "Party Status" strip at the top of the Dice & Combat panel: a compact, color-coded HP pill per party character, sourced live from each character's sheet HP (not the combat tracker), always visible regardless of whether combat/initiative is active.
 
 13. **Mobile / small screens** — **Open**  
     Some breakpoints exist; map + dense sheets remain awkward on phones. Tablets matter more than phones for this POC.
@@ -142,7 +142,7 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 
 ### P3 — maintainability (POC health)
 
-15. **Large monolithic front end** (`app.js`) — harder to review and test. **In progress, nearly done:** converting to ES modules (`js/` directory), one subsystem extracted per phase (see History). `app.js` is down from ~5,934 lines to 713 as of Phase 10 (2026-09-04); remaining: Phase 11 (`js/importExport.js`) and Phase 12 (final cleanup of what's left — boot/nav/render orchestration).  
+15. **Large monolithic front end** (`app.js`) — **Addressed (2026-09-04)** — split into ES modules (`js/` directory), one subsystem per module (see "Frontend module map" in Design notes, and History). `app.js`: 5,934 → 207 lines across 11 focused `js/*.js` modules.  
 16. **Little or no automated test coverage** — especially around sync (ad-hoc scripts only in local work).  
 17. **Admin vs player** — seats + DM prep lock are a start; Reset/Import still not DM-gated (F10).  
 18. **Observability** — basic request logging only; “who saved last” would help debug table nights.
@@ -213,6 +213,10 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-05 / Compact party combat overview (P2 #12, addressed)
+
+Added a "Party Status" strip above the Combat Turn Tracker in the Dice & Combat panel: one compact pill per party character showing name and current/max HP, color-coded on the same red→green spectrum as the character sheet's own HP display (`hpHealthColor()`). Sourced from `partyCharactersForCombat()` (live sheet data), so it's accurate whether or not those characters are on the initiative tracker, and updates automatically on every `renderAll()` (e.g. after a DM heal/damage action or an incoming sync). New: `renderPartyStatusStrip()` in `js/combat.js`. Browser-verified against the disposable test game: full HP (green), critical HP (red), and back to full — all rendered correctly with no console errors.
 
 ### 2026-09-04 / app.js module split — Phases 11-12: importExport.js, final cleanup (P3 #15, complete)
 

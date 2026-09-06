@@ -6,7 +6,7 @@ import {
     sessionHeaders, setSyncStatus, saveStateToServer, loadState, logRoll,
     IS_SERVER_MODE, markCombatSyncSuppressedUntil
 } from './sync.js';
-import { escapeHtml, formatCombatHpDisplay, playDiceSound } from './utils.js';
+import { escapeHtml, formatCombatHpDisplay, hpHealthColor, playDiceSound } from './utils.js';
 import { updateSessionLogChrome } from './sessionLogs.js';
 
 export function initDefaultCombatants(chars) {
@@ -201,6 +201,7 @@ export function switchToCombatPanel() {
     const panelCombat = document.getElementById('panel-combat');
     if (panelCombat) panelCombat.classList.add('active');
 
+    renderPartyStatusStrip();
     renderInitiativeList();
     renderRollHistory();
 }
@@ -599,6 +600,24 @@ export function renderRollHistory() {
         `;
         list.appendChild(row);
     });
+}
+
+/** Compact at-a-glance party HP strip, shown above the tracker regardless of combat state. */
+export function renderPartyStatusStrip() {
+    const strip = document.getElementById('party-status-strip');
+    if (!strip) return;
+    const party = partyCharactersForCombat();
+    strip.innerHTML = party.map(p => {
+        const hasHp = p.hp != null && p.maxHp != null;
+        const { color } = hasHp ? hpHealthColor(p.hp, p.maxHp) : { color: 'var(--text-muted)' };
+        const hpText = hasHp ? `${formatCombatHpDisplay(p.hp)}/${formatCombatHpDisplay(p.maxHp)}` : '??';
+        return `
+            <div class="party-status-pill" style="border-left-color: ${color};" title="${escapeHtml(p.name)}: ${escapeHtml(hpText)} HP">
+                <span class="party-status-name">${escapeHtml(p.name)}</span>
+                <span class="party-status-hp" style="color: ${color};">${escapeHtml(hpText)}</span>
+            </div>
+        `;
+    }).join('');
 }
 
 export function renderInitiativeList() {

@@ -1589,6 +1589,42 @@ body {
 }
 
 /* DICE ROLLER & COMBAT */
+.party-status-card {
+    margin-bottom: 20px;
+}
+
+.party-status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.party-status-strip:empty::before {
+    content: 'No characters in this campaign yet.';
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.party-status-pill {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    background: var(--bg-dark);
+    border: 1px solid rgba(197, 160, 89, 0.2);
+    border-left: 4px solid var(--border-gold-dim);
+    font-size: 0.85rem;
+}
+
+.party-status-pill .party-status-name {
+    font-weight: 600;
+}
+
+.party-status-pill .party-status-hp {
+    font-variant-numeric: tabular-nums;
+}
+
 .combat-view-grid {
     display: grid;
     grid-template-columns: 1fr 1.5fr;
