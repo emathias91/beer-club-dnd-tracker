@@ -1591,6 +1591,7 @@ body {
 /* DICE ROLLER & COMBAT */
 .party-status-card {
     margin-bottom: 20px;
+    flex-shrink: 0;
 }
 
 .party-status-strip {
@@ -1625,17 +1626,26 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.combat-scroll-area {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
 .combat-view-grid {
     display: grid;
     grid-template-columns: 1fr 1.5fr;
     gap: 25px;
-    height: calc(100vh - 140px);
+    flex: 1 1 auto;
+    min-height: 560px;
 }
 
 @media (max-width: 900px) {
     .combat-view-grid {
         grid-template-columns: 1fr;
-        height: auto;
+        min-height: 0;
     }
 }
 
