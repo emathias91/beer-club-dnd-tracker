@@ -151,6 +151,42 @@ function saveStateSafely(body, callback) {
     }
 }
 
+/** Shared write path for a full-state replace (POST /api/state and its DM-gated admin variant). */
+function persistFullState(body, res) {
+    let parsed;
+    try {
+        parsed = JSON.parse(body);
+    } catch (e) {
+        return json(res, 400, { error: 'Invalid JSON payload' });
+    }
+    if (!parsed || !Array.isArray(parsed.campaigns)) {
+        return json(res, 400, { error: 'Refusing to save: campaigns must be an array' });
+    }
+    try {
+        // Always write split layout + keep monolith backup mirror
+        if (parsed.campaigns.length === 0) {
+            // blank table: write empty manifest
+            store.writeSplitFromState({
+                campaigns: [],
+                activeCampaignId: '',
+                combatants: parsed.combatants || [],
+                activeCombatantIndex: parsed.activeCombatantIndex || 0,
+                combatRound: parsed.combatRound || 1,
+                rollHistory: parsed.rollHistory || []
+            });
+        } else {
+            store.writeSplitFromState(parsed);
+        }
+        saveStateSafely(body, (err) => {
+            if (err) console.warn('monolith mirror save failed:', err.message);
+            json(res, 200, { success: true, schemaVersion: store.SCHEMA_VERSION });
+        });
+    } catch (e) {
+        console.error(e);
+        return json(res, 500, { error: 'Failed to save campaign state' });
+    }
+}
+
 function json(res, code, obj) {
     const b = JSON.stringify(obj);
     res.writeHead(code, {
@@ -717,44 +753,31 @@ async function handleTableApi(req, res, urlPath, access) {
                 } catch (e) {
                     return json(res, e.status || 500, { error: e.message });
                 }
-                let parsed;
-                try {
-                    parsed = JSON.parse(body);
-                } catch (e) {
-                    return json(res, 400, { error: 'Invalid JSON payload' });
-                }
-                if (!parsed || !Array.isArray(parsed.campaigns) || parsed.campaigns.length === 0) {
-                    // Allow empty campaigns for blank template tables
-                    if (!parsed || !Array.isArray(parsed.campaigns)) {
-                        return json(res, 400, { error: 'Refusing to save: campaigns must be an array' });
-                    }
-                }
-                try {
-                    // Always write split layout + keep monolith backup mirror
-                    if (parsed.campaigns.length === 0) {
-                        // blank table: write empty manifest
-                        store.writeSplitFromState({
-                            campaigns: [],
-                            activeCampaignId: '',
-                            combatants: parsed.combatants || [],
-                            activeCombatantIndex: parsed.activeCombatantIndex || 0,
-                            combatRound: parsed.combatRound || 1,
-                            rollHistory: parsed.rollHistory || []
-                        });
-                    } else {
-                        store.writeSplitFromState(parsed);
-                    }
-                    saveStateSafely(body, (err) => {
-                        if (err) console.warn('monolith mirror save failed:', err.message);
-                        json(res, 200, { success: true, schemaVersion: store.SCHEMA_VERSION });
-                    });
-                } catch (e) {
-                    console.error(e);
-                    return json(res, 500, { error: 'Failed to save campaign state' });
-                }
-                return;
+                return persistFullState(body, res);
             }
             return json(res, 405, { error: 'Method Not Allowed' });
+        }
+
+        // Admin-only full-state replace: same write path as POST /api/state, but
+        // requires a DM seat. Used by Import, Delete Campaign, and Clone Campaign —
+        // the plain /api/state POST above stays open because ordinary gameplay
+        // saves (character/map/combat edits) fall back to it too when a piece-save
+        // isn't available yet, and any seat must be able to make those.
+        if (urlPath === '/api/state/admin-replace' && req.method === 'POST') {
+            let body;
+            try {
+                body = await readBody(req, 25 * 1024 * 1024);
+            } catch (e) {
+                return json(res, e.status || 500, { error: e.message });
+            }
+            const sess = store.getSession(sessionToken(req, null));
+            if (!sess || sess.role !== 'dm') {
+                return json(res, 403, {
+                    error: 'DM seat required for this action.',
+                    reason: 'dm_required'
+                });
+            }
+            return persistFullState(body, res);
         }
 
         /* ---------- DM notes (PIN + DM seat; never player seats) ---------- */

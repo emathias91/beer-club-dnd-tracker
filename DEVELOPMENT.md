@@ -144,7 +144,7 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 
 15. **Large monolithic front end** (`app.js`) — **Addressed (2026-09-04)** — split into ES modules (`js/` directory), one subsystem per module (see "Frontend module map" in Design notes, and History). `app.js`: 5,934 → 207 lines across 11 focused `js/*.js` modules.  
 16. **Little or no automated test coverage** — especially around sync (ad-hoc scripts only in local work).  
-17. **Admin vs player** — seats + DM prep lock are a start; Reset/Import still not DM-gated (F10).  
+17. **Admin vs player** — **Addressed (2026-09-06)** — seats + DM prep lock; Import, Delete Campaign, Clone Campaign, and Create Campaign are now DM-gated **server-side** (F10), not just in the client UI. See History.  
 18. **Observability** — basic request logging only; “who saved last” would help debug table nights.
 
 ### Explicitly deferred (not current POC goals)
@@ -213,6 +213,12 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-06 / Server-side DM gating for Import, Delete Campaign, Clone Campaign (P3 #17, addressed)
+
+`POST /api/state` (full-state replace) had no server-side authorization — only the shared table PIN was required, not a DM seat. The client hid/disabled the Import, Delete Campaign, and Clone Campaign controls unless `canUseDestructiveAdmin()`, but that's cosmetic: anyone who knew the table PIN could call the endpoint directly (curl/devtools) and fully wipe or replace the campaign, regardless of seat. "Delete Game" and character DM-lock/unlock already had real server checks — this was the one gap.
+
+Fix: `POST /api/state` couldn't just get a blanket DM check, since it's also the shared fallback save path for ordinary per-seat gameplay saves (character/map/combat edits) when a piece-save can't run yet — gating it would have broken normal play for players. Instead added a new `POST /api/state/admin-replace` endpoint (server.js) that requires `sess.role === 'dm'` (403 otherwise) before reusing the same write path (factored into a shared `persistFullState()` helper). Repointed the four genuinely-admin call sites — Import apply, Delete Campaign, Clone Campaign, Create Campaign — to it via `saveStateToServer({ admin: true })` (`js/sync.js`); every other caller (player notes, item transfer, map upload, combat fallback save) is untouched and still hits the open `/api/state`. Verified via curl (no DM session → 403; DM session → 200; plain `/api/state` still open) and in-browser (Clone → Delete round trip as DM, persisted across a hard reload).
 
 ### 2026-09-05 / Compact party combat overview (P2 #12, addressed)
 

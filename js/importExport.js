@@ -255,7 +255,7 @@ export async function applyFullStateReplace(payload, logLabel) {
 
     let ok = true;
     if (IS_SERVER_MODE) {
-        ok = await saveStateToServer();
+        ok = await saveStateToServer({ admin: true });
     }
     renderCampaignSelector();
     renderAll();

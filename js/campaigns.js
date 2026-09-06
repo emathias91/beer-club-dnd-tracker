@@ -158,7 +158,7 @@ export function initCampaignSettings() {
             state.combatRound = 1;
 
             if (IS_SERVER_MODE) {
-                await saveStateToServer();
+                await saveStateToServer({ admin: true });
             } else {
                 saveState();
             }
@@ -226,7 +226,7 @@ export function initCampaignSettings() {
 
         let ok = true;
         if (IS_SERVER_MODE) {
-            ok = await saveStateToServer();
+            ok = await saveStateToServer({ admin: true });
             if (!ok) {
                 alert('Could not save after deleting the campaign. Check sync status.');
             }
@@ -303,7 +303,7 @@ export async function createBlankCampaign(name) {
 
     // Full state write so split layout + revisions exist for the new campaign id
     if (IS_SERVER_MODE) {
-        const ok = await saveStateToServer();
+        const ok = await saveStateToServer({ admin: true });
         if (!ok) {
             // Roll back local if server rejected
             state.campaigns = state.campaigns.filter(c => c.id !== newCampaign.id);

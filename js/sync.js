@@ -288,8 +288,12 @@ export function queueSmartSave() {
     _saveTimer = setTimeout(() => { smartSaveToServer(); }, 200);
 }
 
-export async function saveStateToServer() {
-    // Full snapshot write (init / import / reset / fallback)
+export async function saveStateToServer(opts) {
+    // Full snapshot write (init / import / reset / fallback).
+    // opts.admin routes through the DM-gated endpoint — use it for destructive
+    // admin actions (import apply, delete campaign, clone campaign), never for
+    // ordinary per-seat gameplay saves that happen to fall back to a full write.
+    const endpoint = (opts && opts.admin) ? '/api/state/admin-replace' : '/api/state';
     try {
         setSyncStatus('Saving…', 'warn');
         const payload = {
@@ -300,14 +304,14 @@ export async function saveStateToServer() {
             combatRound: state.combatRound,
             rollHistory: state.rollHistory
         };
-        const response = await fetch('/api/state', {
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: sessionHeaders(),
             body: JSON.stringify(payload)
         });
         if (!response.ok) {
             console.error('Server failed to save campaign state:', response.statusText);
-            setSyncStatus('Save failed', 'err');
+            setSyncStatus(response.status === 403 ? 'DM seat required' : 'Save failed', 'err');
             return false;
         }
         // refresh revisions
