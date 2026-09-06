@@ -134,8 +134,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 13. **Mobile / small screens** — **Open**  
     Some breakpoints exist; map + dense sheets remain awkward on phones. Tablets matter more than phones for this POC.
 
-14a. **Save-before-revisions-loaded can silently no-op** — **Open, found 2026-09-03**  
-    `smartSaveToServer()` (`js/sync.js`) gates each piece-save on `typeof state.revisions[key] === 'number'` with no fallback for the "haven't loaded a snapshot yet" case; a save attempted in that narrow window updates the UI locally but never PUTs to the server, and a later poll cycle silently reverts it. Found during Phase 6 module-split verification (pre-existing, not a regression from that phase). Low severity in practice (revisions populate almost immediately after boot) but worth a real fix — e.g. `saveState()` awaiting `loadState()` once if revisions are empty.
+14a. **Save-before-revisions-loaded can silently no-op** — **Addressed (2026-09-06)**  
+    `smartSaveToServer()` (`js/sync.js`) already had a top-level fallback for *all* revisions being empty, but the per-document Map/Meta/Combat blocks each read `if (typeof baseRevision === 'number') { ...PUT... }` with no `else` — if just that one document's revision hadn't loaded yet (revisions for other documents already present, so the top-level guard didn't trip), the block silently did nothing: no PUT, no error, no reload, and the function still reported `'Saved'` at the end. The edit lived only in local UI state until the next ~3s poll silently reverted it. Fixed by adding the same reload/full-save fallback used elsewhere in the function to all three blocks. Verified by deleting `state.revisions['map:<id>']` in a live session and confirming a party-position edit now reaches the server instead of vanishing.
 
 14. **Seed vs empty start** — **Addressed (2026-08-25/26)**  
     Empty table heal loop fixed; **Create Campaign** on map empty state + Campaign Settings guarded when no active campaign; blank create uses full `POST /api/state`.
@@ -213,6 +213,10 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-06 / Fix silent no-op on map/meta/combat piece-saves (P2 #14a, addressed)
+
+`smartSaveToServer()` (`js/sync.js`) had a real gap distinct from the general "no revisions loaded yet" case (which was already handled): the Map, Meta, and Combat save blocks each guarded their PUT on `typeof baseRevision === 'number'` with no `else`. If only that one document's revision key was missing from `state.revisions` — e.g. right after switching the active campaign, while other documents' revisions were already populated — the block silently skipped the network call entirely, then the function still reported `setSyncStatus('Saved', 'ok')`. The edit existed only in local UI state and got silently reverted by the next poll. Added the same reload(player)/full-save(DM) fallback already used by the character-save loop to all three blocks. Reproduced live by deleting a single revision key and confirming a map edit now reaches the server; confirmed fixed the same way.
 
 ### 2026-09-06 / Server-side DM gating for Import, Delete Campaign, Clone Campaign (P3 #17, addressed)
 

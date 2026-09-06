@@ -518,6 +518,18 @@ export async function smartSaveToServer() {
                     await saveStateToServer();
                     return;
                 }
+            } else {
+                // Revision for this document not loaded yet — save the map edit
+                // via a fallback instead of silently dropping it (it would
+                // otherwise never reach the server and get reverted on next poll).
+                if (isPlayerSeat) {
+                    await loadState();
+                    renderAll();
+                    setSyncStatus('Live', 'ok');
+                    return;
+                }
+                await saveStateToServer();
+                return;
             }
         }
 
@@ -556,6 +568,17 @@ export async function smartSaveToServer() {
                     await saveStateToServer();
                     return;
                 }
+            } else {
+                // Revision for this document not loaded yet — save the meta edit
+                // via a fallback instead of silently dropping it.
+                if (isPlayerSeat) {
+                    await loadState();
+                    renderAll();
+                    setSyncStatus('Live', 'ok');
+                    return;
+                }
+                await saveStateToServer();
+                return;
             }
         }
 
@@ -594,6 +617,17 @@ export async function smartSaveToServer() {
                     await saveStateToServer();
                     return;
                 }
+            } else {
+                // Revision for this document not loaded yet — save the combat edit
+                // via a fallback instead of silently dropping it.
+                if (isPlayerSeat) {
+                    await loadState();
+                    renderAll();
+                    setSyncStatus('Live', 'ok');
+                    return;
+                }
+                await saveStateToServer();
+                return;
             }
         }
 
