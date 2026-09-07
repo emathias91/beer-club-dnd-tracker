@@ -145,7 +145,7 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 15. **Large monolithic front end** (`app.js`) — **Addressed (2026-09-04)** — split into ES modules (`js/` directory), one subsystem per module (see "Frontend module map" in Design notes, and History). `app.js`: 5,934 → 207 lines across 11 focused `js/*.js` modules.  
 16. **Little or no automated test coverage** — especially around sync (ad-hoc scripts only in local work).  
 17. **Admin vs player** — **Addressed (2026-09-06)** — seats + DM prep lock; Import, Delete Campaign, Clone Campaign, and Create Campaign are now DM-gated **server-side** (F10), not just in the client UI. See History.  
-18. **Observability** — basic request logging only; “who saved last” would help debug table nights.
+18. **Observability** — **Addressed (2026-09-07)** — every meta/map/combat/character document now carries `lastSavedBy: { label, role, at }`, and table-scoped requests log the resolved seat identity, not just method+path. See History.
 
 ### Explicitly deferred (not current POC goals)
 
@@ -219,6 +219,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-07 / "Who saved last" observability (P3 #18, addressed)
+
+Two additions, both server-side only (no client changes):
+
+1. **`lastSavedBy` on every document.** Character, map, combat, and meta documents now carry `lastSavedBy: { label, role, at }`, stamped at every real write site: `putCharacter()`'s direct/DM-force/reclaim/unclaimed branches, `acceptOffer()` (attributed to the offer's original author via `offer.fromLabel`, not whoever clicked accept), `putPiece()` (shared by `putCombat`/`putMap`/`putMeta`, now takes a `sessionToken` param), and `writeSplitFromState()` (full-state writes, given a `savedBy` resolved from the requester's session in `server.js`). Answers "who last touched this" by just reading the document — no log-diving needed, and it survives log rotation since it lives with the data.
+2. **Enriched request log for table-scoped API calls.** `handleTableApi()` now logs `[game] METHOD /path seat=role:label` (resolved from the session header) in addition to the existing bare `method + url` line at the very top of the request handler. Header-only (fires before the body is parsed), which covers the vast majority of real traffic since the client always sends `X-Session-Token` once a seat is claimed.
+
+Verified via a live DM session: character HP edits, map moves, and full-state writes all correctly stamp `lastSavedBy`; the enriched log line shows the right seat identity for each.
 
 ### 2026-09-06 / In-app backup & restore UI (P2 #10 / F9, addressed)
 

@@ -247,7 +247,7 @@ function saveStateSafely(body, callback) {
 }
 
 /** Shared write path for a full-state replace (POST /api/state and its DM-gated admin variant). */
-function persistFullState(body, res) {
+function persistFullState(body, res, savedBy) {
     let parsed;
     try {
         parsed = JSON.parse(body);
@@ -268,9 +268,9 @@ function persistFullState(body, res) {
                 activeCombatantIndex: parsed.activeCombatantIndex || 0,
                 combatRound: parsed.combatRound || 1,
                 rollHistory: parsed.rollHistory || []
-            });
+            }, savedBy);
         } else {
-            store.writeSplitFromState(parsed);
+            store.writeSplitFromState(parsed, savedBy);
         }
         saveStateSafely(body, (err) => {
             if (err) console.warn('monolith mirror save failed:', err.message);
@@ -314,6 +314,12 @@ function sessionToken(req, parsed) {
     return req.headers['x-session-token']
         || (parsed && parsed.sessionToken)
         || '';
+}
+
+/** Observability (P3 #18): resolve { label, role } for stamping lastSavedBy on writes. */
+function resolveSavedBy(req, parsed) {
+    const sess = store.getSession(sessionToken(req, parsed));
+    return { label: (sess && sess.label) || 'Unknown', role: (sess && sess.role) || null };
 }
 
 function gameAccessToken(req, parsed) {
@@ -548,6 +554,16 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function handleTableApi(req, res, urlPath, access) {
+        // Observability (P3 #18): the top-level request log (below) fires before the
+        // game/seat is known; this one names the game and resolved seat identity —
+        // header-only (no body parsed yet), which covers the vast majority of real
+        // traffic since the client always sends X-Session-Token when a seat is claimed.
+        {
+            const sess = store.getSession(sessionToken(req, null));
+            const who = sess ? `${sess.role}${sess.label ? ':' + sess.label : ''}` : 'no-seat';
+            console.log(`[${new Date().toISOString()}] [${access.gameId}] ${req.method} ${urlPath} seat=${who}`);
+        }
+
         /* ---------- Entry / seats ---------- */
         if (urlPath === '/api/entry' && req.method === 'GET') {
             const entry = store.buildEntry();
@@ -778,7 +794,7 @@ async function handleTableApi(req, res, urlPath, access) {
         if (params && req.method === 'PUT') {
             const raw = await readBody(req, 25 * 1024 * 1024);
             let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
-            const result = store.putCombat(params.campaignId, p.baseRevision, p.data);
+            const result = store.putCombat(params.campaignId, p.baseRevision, p.data, sessionToken(req, p));
             return json(res, result.status, result);
         }
 
@@ -786,7 +802,7 @@ async function handleTableApi(req, res, urlPath, access) {
         if (params && req.method === 'PUT') {
             const raw = await readBody(req, 10 * 1024 * 1024);
             let p; try { p = JSON.parse(raw || '{}'); } catch (e) { return json(res, 400, { error: 'Invalid JSON' }); }
-            const result = store.putMap(params.campaignId, p.baseRevision, p.data);
+            const result = store.putMap(params.campaignId, p.baseRevision, p.data, sessionToken(req, p));
             return json(res, result.status, result);
         }
 
@@ -812,7 +828,7 @@ async function handleTableApi(req, res, urlPath, access) {
                     }
                 }
             }
-            const result = store.putMeta(params.campaignId, p.baseRevision, p.data);
+            const result = store.putMeta(params.campaignId, p.baseRevision, p.data, sessionToken(req, p));
             return json(res, result.status, result);
         }
 
@@ -848,7 +864,7 @@ async function handleTableApi(req, res, urlPath, access) {
                 } catch (e) {
                     return json(res, e.status || 500, { error: e.message });
                 }
-                return persistFullState(body, res);
+                return persistFullState(body, res, resolveSavedBy(req, null));
             }
             return json(res, 405, { error: 'Method Not Allowed' });
         }
@@ -872,7 +888,7 @@ async function handleTableApi(req, res, urlPath, access) {
                     reason: 'dm_required'
                 });
             }
-            return persistFullState(body, res);
+            return persistFullState(body, res, { label: sess.label || 'DM', role: sess.role });
         }
 
         /* ---------- Rolling backups (split-layout snapshots; DM seat only) ---------- */
