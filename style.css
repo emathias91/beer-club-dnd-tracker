@@ -317,6 +317,29 @@ body {
     min-height: 500px;
 }
 
+@media (max-width: 900px) {
+    /* Stack map + location-details side panel instead of squeezing both into
+       unreadably narrow columns; let the whole panel scroll (matches the
+       #panel-map { overflow: hidden } → per-panel scroll-host pattern used
+       elsewhere, e.g. #panel-characters > .char-sheet-layout). */
+    .map-view-container {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow-y: auto;
+    }
+    .map-wrapper {
+        height: 50vh;
+        min-height: 320px;
+        flex-shrink: 0;
+    }
+    .marker-details-placeholder {
+        height: auto;
+        min-height: 140px;
+    }
+}
+
 .map-wrapper {
     position: relative;
     background-color: #050505;
@@ -2240,6 +2263,43 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+
+/* Paired-field rows inside modal forms (Level/XP, Max HP/Armor Class, etc.).
+   Grid items default to min-width: auto, which respects an <input>'s
+   intrinsic minimum width (~150-190px) — with two of those per row, that
+   forced modals wider than the viewport on phones with no way to reach the
+   cut-off fields. min-width: 0 lets the columns actually shrink; the mobile
+   breakpoint stacks them to one column instead of squeezing two half-width
+   inputs. */
+.form-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    min-width: 0;
+}
+
+.form-row-2col > .form-group {
+    min-width: 0;
+}
+
+.form-row-2col.form-row-wide {
+    grid-template-columns: 2fr 1fr;
+    gap: 15px;
+}
+
+.form-row-2col.form-row-qty {
+    grid-template-columns: 100px 1fr;
+}
+
+@media (max-width: 480px) {
+    /* .form-row-wide/.form-row-qty are two-class selectors and would
+       otherwise out-specificity this single-class override. */
+    .form-row-2col,
+    .form-row-2col.form-row-wide,
+    .form-row-2col.form-row-qty {
+        grid-template-columns: 1fr;
+    }
 }
 
 .form-group label {

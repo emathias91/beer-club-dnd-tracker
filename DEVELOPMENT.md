@@ -131,8 +131,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 12. **No compact party combat overview** — **Addressed (2026-09-05)**  
     Added a "Party Status" strip at the top of the Dice & Combat panel: a compact, color-coded HP pill per party character, sourced live from each character's sheet HP (not the combat tracker), always visible regardless of whether combat/initiative is active.
 
-13. **Mobile / small screens** — **Open**  
-    Some breakpoints exist; map + dense sheets remain awkward on phones. Tablets matter more than phones for this POC.
+13. **Mobile / small screens** — **Partial (2026-09-07)**  
+    A targeted phone-width audit (390px) found and fixed two real bugs: the Map panel's 2-column grid had no mobile fallback at all (details panel text wrapped to one word per line); seven modal forms used a raw 2-column grid for paired fields with no `min-width: 0` safety net, so on a phone the columns couldn't shrink and several fields (XP, Armor Class, Background, Subclass on Edit Character Specs; also Add Combatant, Add Skill, Add Equipment, Session Log editor) were cut off past the screen edge, reachable only via a near-invisible scrollbar. Both fixed — see History. Everything else audited (sidebar nav, character sheet, combat/dice panel, session logs, all other modals) already rendered correctly and needed no changes. Not a full audit of every interaction (e.g. touch-drag map-pin placement wasn't specifically re-tested) — flag if something else turns up.
 
 14a. **Save-before-revisions-loaded can silently no-op** — **Addressed (2026-09-06)**  
     `smartSaveToServer()` (`js/sync.js`) already had a top-level fallback for *all* revisions being empty, but the per-document Map/Meta/Combat blocks each read `if (typeof baseRevision === 'number') { ...PUT... }` with no `else` — if just that one document's revision hadn't loaded yet (revisions for other documents already present, so the top-level guard didn't trip), the block silently did nothing: no PUT, no error, no reload, and the function still reported `'Saved'` at the end. The edit lived only in local UI state until the next ~3s poll silently reverted it. Fixed by adding the same reload/full-save fallback used elsewhere in the function to all three blocks. Verified by deleting `state.revisions['map:<id>']` in a live session and confirming a party-position edit now reaches the server instead of vanishing.
@@ -219,6 +219,15 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-07 / Mobile layout fixes — map panel + modal form overflow (P2 #13, partial)
+
+Audited the app at a real 390px phone viewport (browser-window resizing wasn't available this session, so verification used a phone-sized `<iframe>` on a same-origin harness page — an iframe gets its own independent viewport for CSS media queries, close to actual device testing). Found and fixed two real bugs, confirmed everything else already worked:
+
+1. **Map panel had no mobile layout at all.** `.map-view-container` (`style.css`) was a fixed `2fr 1fr` grid with a forced `height: calc(100vh - 140px)` and no `@media` override anywhere — on a phone both the map and the "location details" side panel got squeezed into unreadably narrow columns (the details text wrapped to one word per line). Added a `max-width: 900px` block: stacks to one column, lets the panel scroll instead of clipping (same `#panel-map { overflow: hidden }` → per-panel-scroll-host pattern already used for `#panel-characters` and the combat panel), and gives the map itself a sane `50vh` height instead of the desktop-only 100vh-based calc.
+2. **Seven modal forms overflowed horizontally on a phone.** `Edit Character Specs`, `Add Combatant`, `Add Skill`, `Add Equipment`, and the `Session Log` editor each laid out paired fields (Level/XP, Max HP/Armor Class, etc.) in a raw inline `display:grid; grid-template-columns:1fr 1fr` (or `2fr 1fr` / `100px 1fr`). Grid items default to `min-width: auto`, which respects an `<input>`'s intrinsic minimum width (~150-190px) — two of those per row forced the modal wider than the viewport, with several fields (XP, Armor Class, Background, Subclass on the worst-hit modal) cut off past the screen edge and reachable only via a barely-visible scrollbar. Replaced the six duplicated inline styles with a shared `.form-row-2col` class (`min-width: 0` fix + a `max-width: 480px` breakpoint that stacks pairs to one column) — one fix point instead of patching six near-identical inline styles individually, and it caught a real specificity bug of its own (the `.form-row-wide`/`.form-row-qty` two-class modifiers out-specificity'd the single-class mobile override; fixed by listing all three combinations in the media query).
+
+Verified both fixes at 390px (screenshots) and re-verified desktop width is visually unchanged (same modals, same map layout, pixel-identical). No console errors. Not exhaustive — touch-specific interactions like drag-placing a map pin weren't separately re-tested.
 
 ### 2026-09-07 / First automated test coverage — sync engine + backups (P3 #16, partial)
 
