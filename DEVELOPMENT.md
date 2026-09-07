@@ -143,7 +143,7 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 ### P3 — maintainability (POC health)
 
 15. **Large monolithic front end** (`app.js`) — **Addressed (2026-09-04)** — split into ES modules (`js/` directory), one subsystem per module (see "Frontend module map" in Design notes, and History). `app.js`: 5,934 → 207 lines across 11 focused `js/*.js` modules.  
-16. **Little or no automated test coverage** — especially around sync (ad-hoc scripts only in local work).  
+16. **Little or no automated test coverage** — **Partial (2026-09-07)** — `npm test` (Node's built-in `node:test`, zero new deps) now covers `lib/store.js`'s piece-save revision/conflict engine and the backup/restore subsystem, 16 tests. Still open: seat/session lifecycle, DM Notes encryption, everything client-side. See History.  
 17. **Admin vs player** — **Addressed (2026-09-06)** — seats + DM prep lock; Import, Delete Campaign, Clone Campaign, and Create Campaign are now DM-gated **server-side** (F10), not just in the client UI. See History.  
 18. **Observability** — **Addressed (2026-09-07)** — every meta/map/combat/character document now carries `lastSavedBy: { label, role, at }`, and table-scoped requests log the resolved seat identity, not just method+path. See History.
 
@@ -219,6 +219,14 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-07 / First automated test coverage — sync engine + backups (P3 #16, partial)
+
+Added `test/` using Node's built-in `node:test` runner (zero new deps, matches this project's no-build-tool approach) — run with `npm test`. Scoped to the two highest-risk areas per the backlog's own "especially around sync" callout: `lib/store.js`'s piece-save revision/conflict engine (`putCharacter`'s DM-force/holder/reclaim/unclaimed/helper-offer branches, `putPiece` shared by `putCombat`/`putMap`/`putMeta`, `acceptOffer` attribution) and the backup/restore subsystem just added for P2 #10. 16 tests, `test/helpers.js` for a hermetic per-test temp data root via `store.runWithDataRoot()`.
+
+Writing the backup tests caught a real (if narrow) latent bug: `createBackupSnapshot()`/`createDmNotesBackupSnapshot()` named files by millisecond timestamp alone, so two backups landing in the same millisecond (e.g. a manual "Back Up Now" immediately followed by a restore's pre-restore safety snapshot) would silently overwrite each other. Fixed by appending a random suffix to both filename generators (`lib/store.js`'s `backupFileName()`, `server.js`'s `dmNotesBackupFileName()`).
+
+Not yet covered: seat/session lifecycle (claim/heartbeat/release/prune), DM Notes PIN/encryption, anything client-side. Left as future test-coverage work if wanted.
 
 ### 2026-09-07 / "Who saved last" observability (P3 #18, addressed)
 

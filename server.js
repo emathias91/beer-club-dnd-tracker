@@ -117,8 +117,10 @@ function dmNotesBackupsDir() {
     return path.join(store.dataRoot(), 'backups', 'dm-notes');
 }
 
+// Random suffix guards against two backups landing in the same millisecond
+// and silently overwriting each other (see the equivalent note in lib/store.js).
 function dmNotesBackupFileName(stamp) {
-    return `dmnotes-backup-${stamp}.json`;
+    return `dmnotes-backup-${stamp}-${crypto.randomBytes(3).toString('hex')}.json`;
 }
 
 /** Encrypts with the CURRENT dm.salt, stored alongside the ciphertext (salts

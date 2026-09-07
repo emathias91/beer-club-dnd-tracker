@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "start:local": "DATA_DIR=./data-local node server.js",
+    "test": "node --test",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f dnd-tracker"
