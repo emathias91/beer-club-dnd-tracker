@@ -1619,6 +1619,10 @@ export function ensureProficiencyFlags(c) {
             ? JSON.parse(JSON.stringify(seed.resources))
             : [];
     }
+
+    if (!c.hitDie) {
+        c.hitDie = (seed && seed.hitDie) || 'd8';
+    }
 }
 
 /**
@@ -1654,6 +1658,63 @@ export function recalculateCharacterModifiers(c) {
     });
 }
 
+/* ---------------- Level-up automation (P2 #11) ----------------
+ * Proficiency Bonus and Max HP are suggested from the level change while the
+ * Edit Character Specs modal is open, but never recomputed from an absolute
+ * formula — only the *delta* since the modal opened is added on top of
+ * whatever was already stored. That way a DM's manual override (a feat, a
+ * homebrew ruling, a stored value that predates this feature) always stays
+ * the base for the next level-up instead of being silently overwritten. */
+
+/** Standard 5e proficiency bonus by level — same for every class, one tier per 4 levels. */
+function proficiencyBonusForLevel(level) {
+    const lvl = Math.max(1, parseInt(level) || 1);
+    return 2 + Math.floor((lvl - 1) / 4);
+}
+
+/** Average fixed HP per hit die roll (5e "take the average" convention). */
+function averageHitDieRoll(hitDie) {
+    const size = parseInt(String(hitDie || 'd8').replace(/\D/g, '')) || 8;
+    return Math.floor(size / 2) + 1;
+}
+
+// Snapshot of Level/Proficiency Bonus/Max HP captured when Edit Character
+// Specs opens — the base the live level-up suggestion adds its delta to.
+let editSpecsOriginal = null;
+
+function updateLevelUpSuggestions() {
+    if (!editSpecsOriginal) return;
+    const levelInput = document.getElementById('edit-char-level');
+    const profInput = document.getElementById('edit-char-prof');
+    const hpMaxInput = document.getElementById('edit-char-hp-max');
+    const conInput = document.getElementById('edit-char-con');
+    const hitDieSelect = document.getElementById('edit-char-hitdie');
+    const hint = document.getElementById('level-up-hint');
+
+    const newLevel = parseInt(levelInput.value) || editSpecsOriginal.level;
+    const delta = newLevel - editSpecsOriginal.level;
+
+    if (delta === 0) {
+        profInput.value = editSpecsOriginal.proficiencyBonus;
+        hpMaxInput.value = editSpecsOriginal.hpMax;
+        hint.style.display = 'none';
+        return;
+    }
+
+    const profDelta = proficiencyBonusForLevel(newLevel) - proficiencyBonusForLevel(editSpecsOriginal.level);
+    profInput.value = editSpecsOriginal.proficiencyBonus + profDelta;
+
+    const conScore = parseInt(conInput.value) || 10;
+    const conMod = Math.floor((conScore - 10) / 2);
+    const perLevelHp = averageHitDieRoll(hitDieSelect.value) + conMod;
+    hpMaxInput.value = Math.max(1, editSpecsOriginal.hpMax + delta * perLevelHp);
+
+    hint.style.display = 'block';
+    hint.textContent = delta > 0
+        ? `Level up (+${delta}): Proficiency Bonus and Max HP above are suggested (+${perLevelHp} HP/level, hit die average + CON). Edit either field before saving for a different number — whatever you save becomes the base for the next level up.`
+        : `Level changed: Proficiency Bonus and Max HP above are adjusted to match. Edit either field before saving for a different number.`;
+}
+
 export function openEditCharSpecsModal() {
     const active = getActiveCampaign();
     const c = active.characters[state.activeCharacterId];
@@ -1675,8 +1736,16 @@ export function openEditCharSpecsModal() {
     document.getElementById('edit-char-id').value = state.activeCharacterId;
     document.getElementById('edit-char-level').value = c.level;
     document.getElementById('edit-char-xp').value = c.xp || '0';
+    document.getElementById('edit-char-hitdie').value = c.hitDie || 'd8';
+    document.getElementById('edit-char-prof').value = parseInt(c.proficiencyBonus) || 2;
     document.getElementById('edit-char-hp-max').value = c.hp.max;
     document.getElementById('edit-char-ac').value = c.ac;
+    document.getElementById('level-up-hint').style.display = 'none';
+    editSpecsOriginal = {
+        level: c.level,
+        proficiencyBonus: parseInt(c.proficiencyBonus) || 2,
+        hpMax: c.hp.max
+    };
     document.getElementById('edit-char-species').value = c.species || '';
     document.getElementById('edit-char-background').value = c.background || '';
     document.getElementById('edit-char-class').value = c.class || '';
@@ -1736,6 +1805,13 @@ export function initCharacterPanel() {
         openEditCharSpecsModal();
     });
 
+    // Level-up automation (P2 #11): re-suggest Proficiency Bonus / Max HP
+    // whenever Level, CON, or Hit Die change while the modal is open.
+    ['edit-char-level', 'edit-char-con', 'edit-char-hitdie'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', updateLevelUpSuggestions);
+    });
+
     const slotsLongRest = document.getElementById('btn-spell-slots-long-rest');
     if (slotsLongRest && !slotsLongRest.dataset.bound) {
         slotsLongRest.dataset.bound = '1';
@@ -1780,10 +1856,20 @@ export function initCharacterPanel() {
         const c = active.characters[id];
         if (!c) return;
 
+        const prevLevel = c.level;
+        const prevHpMax = c.hp.max;
+
         c.level = parseInt(document.getElementById('edit-char-level').value) || 1;
         c.xp = document.getElementById('edit-char-xp').value;
+        c.hitDie = document.getElementById('edit-char-hitdie').value;
+        c.proficiencyBonus = signed(parseInt(document.getElementById('edit-char-prof').value) || 2);
         c.hp.max = parseInt(document.getElementById('edit-char-hp-max').value) || 10;
-        if (c.hp.current > c.hp.max) c.hp.current = c.hp.max;
+        if (c.hp.max > prevHpMax) {
+            // Leveling up heals along with the new max, same as gaining a hit die in 5e.
+            c.hp.current = Math.min(c.hp.max, c.hp.current + (c.hp.max - prevHpMax));
+        } else if (c.hp.current > c.hp.max) {
+            c.hp.current = c.hp.max;
+        }
 
         c.ac = parseInt(document.getElementById('edit-char-ac').value) || 10;
         c.species = document.getElementById('edit-char-species').value.trim();
@@ -1813,7 +1899,12 @@ export function initCharacterPanel() {
         renderCharacterTabs();
         document.getElementById('modal-edit-char').style.display = 'none';
 
-        logRoll(c.name, "Level Up / Spec Edit", c.level, `Updated specs and recalculated all modifiers.`);
+        const leveledUp = c.level !== prevLevel;
+        editSpecsOriginal = null;
+        logRoll(c.name, "Level Up / Spec Edit", c.level,
+            leveledUp
+                ? `Level ${prevLevel} → ${c.level}. Updated specs and recalculated all modifiers.`
+                : `Updated specs and recalculated all modifiers.`);
     });
 
     // Save HP Adjustments — moved out of the old initModals grab-bag.

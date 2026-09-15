@@ -856,6 +856,23 @@ e.g.
 
                 <div class="form-row-2col">
                     <div class="form-group">
+                        <label for="edit-char-hitdie">Hit Die</label>
+                        <select id="edit-char-hitdie">
+                            <option value="d6">d6</option>
+                            <option value="d8">d8</option>
+                            <option value="d10">d10</option>
+                            <option value="d12">d12</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-char-prof">Proficiency Bonus</label>
+                        <input type="number" id="edit-char-prof">
+                    </div>
+                </div>
+                <p class="entry-hint" id="level-up-hint" style="display:none; margin: -6px 0 0;"></p>
+
+                <div class="form-row-2col">
+                    <div class="form-group">
                         <label for="edit-char-hp-max">Max HP</label>
                         <input type="number" id="edit-char-hp-max">
                     </div>

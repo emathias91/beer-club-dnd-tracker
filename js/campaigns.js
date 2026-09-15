@@ -267,7 +267,8 @@ function buildStarterCharacter() {
         speed: '30 ft',
         initiative: '+0',
         passivePerception: 10,
-        proficiencyBonus: '+2'
+        proficiencyBonus: '+2',
+        hitDie: 'd8'
     };
 }
 

@@ -125,8 +125,8 @@ Residual risk: full `POST /api/state` still exists for import/compat paths; pref
 10. **Rolling backups are server-only** — **Addressed (2026-09-06, F9)**  
     In-app DM-only "Backups" panel to list and restore. Backups now snapshot the split-layout data itself (gzip, not a monolith copy) and trigger on *every* meta/map/combat/character write (piece-saves included, throttled to at most one auto-snapshot per 15 min), not just full-state writes — closes a real gap where ordinary gameplay edits were never backed up. DM Notes are backed up separately, AES-256-GCM encrypted with a key derived from the DM PIN, since the live `dm_notes.json` holds notes in plaintext and a plain copy would leak them to anyone with filesystem access. See "Backups (ops note)" below and History.
 
-11. **Level-up partial automation** — **Open**  
-    Modifiers recalculate; HP max and spell slots remain manual — easy to forget mid-session.
+11. **Level-up partial automation** — **Partial (2026-09-14)**  
+    Proficiency Bonus and Max HP now live-suggest in Edit Character Specs when Level changes — added editable **Hit Die** and **Proficiency Bonus** fields; delta-based, not a recompute-from-formula, so a DM's manual override always becomes the base for the next level-up (never silently overwritten). Spell slots are still fully manual — no editor UI exists for them at all yet (per-class 5e progression tables + a caster-type concept would be needed, out of scope this pass; see History).
 
 12. **No compact party combat overview** — **Addressed (2026-09-05)**  
     Added a "Party Status" strip at the top of the Dice & Combat panel: a compact, color-coded HP pill per party character, sourced live from each character's sheet HP (not the combat tracker), always visible regardless of whether combat/initiative is active.
@@ -219,6 +219,16 @@ Recognize without devtools: **Live**, **Saving…**, **Conflict — reload**, **
 ## History
 
 Newest first. Record shared, meaningful changes (behavior, repo process, fixes). Skip pure personal env details.
+
+### 2026-09-14 / Level-up automation for Proficiency Bonus + Max HP (P2 #11, partial)
+
+Investigating the backlog item found the gap was actually worse than described: `proficiencyBonus` had no editor UI at all and no connection to Level — meaning skill/save modifiers were silently wrong for any character above level 4 unless someone hand-edited the raw JSON. Also no `hitDie` field existed, so there was nothing to base a Max HP calculation on.
+
+Added: an editable **Hit Die** field (d6/d8/d10/d12 dropdown) and an editable **Proficiency Bonus** field to Edit Character Specs. While the modal is open, changing Level (or CON, or Hit Die) live-recomputes suggested values for both, shown with an explanatory hint — but critically, **the suggestion is a delta on top of whatever was already stored, not a recompute from an absolute formula.** Proficiency Bonus uses the standard universal 5e tier formula (`2 + floor((level-1)/4)`, same for every class — only the *change* in tier since the modal opened is added). Max HP uses `levels gained × (hit die average + CON modifier)`. Per explicit user instruction: the DM can freely overwrite either suggested value before saving, and whatever gets saved becomes the base the *next* level-up's delta is computed from — never silently overwritten by the formula. Leveling up (a Max HP increase) also heals current HP by the same amount, matching 5e's "you gain the HP immediately" rule; a Max HP decrease just clamps current down as before.
+
+Verified the full loop live: level 1→5 correctly suggested Prof +1/HP +20; manually overrode Max HP to 35 instead of the suggested 30 and saved; reopened the modal and confirmed it now showed 35 (not 30) as the starting point; leveled 5→6 (same proficiency tier) and confirmed the new suggestion was exactly 35+5=40, built on the overridden value; leveled back down to 5 and confirmed it reverted cleanly to the original snapshot (3 / 35) with the hint hidden. Character sheet, skill/save modifiers, and the activity log ("Level 1 → 5...") all confirmed correct afterward.
+
+Spell slots remain entirely manual — deliberately out of scope this pass. There's no editor UI for them at all currently (only display + expend/restore), and real automation would need a full per-class 5e spell-slot progression table plus a way to know caster type, which doesn't fit cleanly since Class is a free-text field here, not a fixed list.
 
 ### 2026-09-07 / Mobile layout fixes — map panel + modal form overflow (P2 #13, partial)
 
